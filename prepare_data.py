@@ -43,3 +43,10 @@ for ii in range(shape_input[1]):
 for ii in range(shape_output[1]):
     output_data[:,ii] = norm_data(output_data[:,ii])
 
+# Saves data as csv files 
+
+df_train_input = pd.DataFrame(input_data)
+df_train_output = pd.DataFrame(output_data)
+
+df_train_input.to_csv("Training Datasets/input_data.csv")
+df_train_output.to_csv("Training Datasets/output_data.csv")
