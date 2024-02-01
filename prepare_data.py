@@ -11,7 +11,7 @@ def norm_data(x):
 # Load csv files 
 
 df_weather=pd.read_csv('Weather Data/input_weatherData.csv')
-df_scintillometer=pd.read_csv('Weather Data/output_scintillometerData.csv')
+df_scintillometer=pd.read_csv('Weather Data/output_scintillometerData_wLI.csv')
 
 # Get all rows where the indices match
 
@@ -27,7 +27,7 @@ for ii,ind in enumerate(weather_index):
         print(f"Error detected at ii = {ii}, ind = {ind} ")
     else:
         input_data.append([eval(df_weather["Temp (°C)"][ii]), eval(df_weather["Rel Hum (%)"][ii]), eval(df_weather["Stn Press (kPa)"][ii])])
-        output_data.append([np.log10(eval(df_scintillometer["Cn2"][ind])), df_scintillometer["Fried"][ind]])
+        output_data.append([np.log10(df_scintillometer["Cn2"][ind]), df_scintillometer["Fried"][ind]])
         
 input_data = np.array(input_data)
 output_data = np.array(output_data)
