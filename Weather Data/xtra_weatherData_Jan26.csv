@@ -1,4 +1,4 @@
-,date_time_local,pressure_station,pressure_sea,wind_dir_10s,wind_speed,relative_humidity,dew_point,temperature,windchill,visibility,cloud_cover_8,solar_radiation,max_air_temp_pst1hr,min_air_temp_pst1hr
+Index,date_time_local,pressure_station,pressure_sea,wind_dir_10s,wind_speed,relative_humidity,dew_point,temperature,windchill,visibility,cloud_cover_8,solar_radiation,max_air_temp_pst1hr,min_air_temp_pst1hr
 47,2023-07-19 17:00:00 EDT,100.3,101.68,23,14,44,13,25.9,ERROR,24100,2,2330,26.2,25.6
 107,2023-07-19 18:00:00 EDT,100.29,101.67,28,14,45,13,25.5,ERROR,24100,4,1655,26.2,25.1
 167,2023-07-19 19:00:00 EDT,100.26,101.63,29,7,49,13.8,25.2,ERROR,24100,3,991,25.7,25
