@@ -1,0 +1,18 @@
+model_name: 'gruRNN_Feb13'
+nn_type: 0
+neurons: 80
+hidLayers: 1
+
+direc_name: OneHourAhead
+trainTest_split: 0.90
+trainVal_split: 0.15
+
+epochs: 100
+init_lr: 1.e-3
+patience: 5
+lr_reduce_factor: 0.1
+batch_size: 4
+
+
+
+
