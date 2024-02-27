@@ -80,7 +80,7 @@ def norm_data(x):
     return x
 
 
-def load_data(direc_name, time_steps):
+def load_data(direc_name, time_steps, include_cn2):
 
     total_input = []
     total_output = []
@@ -93,7 +93,11 @@ def load_data(direc_name, time_steps):
     for ii, name in enumerate(directory_list):
         df = pd.read_csv(f'{direc_name}/{name}')
         
-        dataset_weather = np.empty((time_steps, 4))
+        if (include_cn2):
+            dataset_weather = np.empty((time_steps, 5))
+        else:
+            dataset_weather = np.empty((time_steps, 4))
+            
         dataset_output = np.empty((1, 1))
         
         ###### INPUT DATA #######
@@ -106,6 +110,11 @@ def load_data(direc_name, time_steps):
         dataset_weather[:,2] = df["pressure_station"].to_numpy()
         #In the 3rd input, Solar Radiation 
         dataset_weather[:,3] = df["solar_radiation"].to_numpy()
+        
+        # Okay, let's try including the CN^2 as proof of principle
+        if (include_cn2):
+            dataset_weather[:,4] = np.log10(df["CN2"].to_numpy())
+ 
         total_input.append(dataset_weather)
         
         ###### OUTPUT DATA #######
@@ -152,6 +161,14 @@ if __name__ == '__main__':
     nn_type = cnfg['nn_type']
     neurons = cnfg['neurons']
     hidLayers = cnfg['hidLayers']
+
+    include_cn2 = cnfg['include_cn2']
+    
+    # If we include cn2 value, adjust number of features to 5
+    
+    if (include_cn2):
+        num_of_features = 5
+    
     model_path = f'models/{model_name}'
 
     # Load up how we wanna split up our data
@@ -166,7 +183,6 @@ if __name__ == '__main__':
     patience = cnfg['patience'] # For how many epochs do we wait before we start adjusting the LR 
     lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
     batch_size = cnfg['batch_size']
-
 
     # Compute total number of samples contained in the subfolder. This'll let us calculate the number of examples that will be used for the training 
     sizeOfFiles = len([name for name in os.listdir(f'{direc}/.')]) # Global parameter
