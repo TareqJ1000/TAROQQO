@@ -10,8 +10,8 @@ def norm_data(x):
     
 # Load csv files 
 
-df_weather=pd.read_csv('Weather Data/input_weatherData.csv')
-df_scintillometer=pd.read_csv('Weather Data/output_scintillometerData_wLI.csv')
+df_weather=pd.read_csv('/Weather Data/input_weatherData.csv')
+df_scintillometer=pd.read_csv('/Weather Data/output_scintillometerData_wLI.csv')
 
 # Get all rows where the indices match
 
