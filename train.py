@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 Code which initializes the training
@@ -17,6 +18,8 @@ from IPython.display import clear_output
 import numpy as np 
 from scipy import stats
 import random
+import argparse
+import itertools
 
 import os
 
@@ -73,14 +76,58 @@ class PlotLearning(tf.keras.callbacks.Callback):
         plt.savefig(directory + f'/epochs_{epoch}.png')
         
         print('Saved plot of most recent training epoch to disk')
+        
+
+def get_column_subsets():
+    column_names = ['pressure_station', 'pressure_sea','dew_point','temperature', 'cloud_cover_8']
+    # Create all possible permutations of this list
+    subsets = [list(itertools.combinations(column_names, ii)) for ii in range(len(column_names)+1)]
+    base_names = ['solar_radiation', 'relative_humidity', 'CN2']
+    all_subsets = []
+    
+    num_of_combo = np.arange(5+1)
+    
+    for ii in num_of_combo:
+        for jj in range(len(subsets[ii])):
+            temp = np.concatenate((base_names, subsets[ii][jj]))
+            all_subsets.append(temp)
+    
+    return all_subsets
+
 
 def norm_data(x):
     for ii in range(len(x)):
         x[ii] = (x[ii] - np.min(x))/(np.max(x) - np.min(x))
     return x
 
+# This applies a rolling average on the dataset 
 
-def load_data(direc_name, time_steps, include_cn2):
+# Function taken from a learnpython article
+
+def roll_average(input_data, window_size):
+    result = []
+    for i in range(len(input_data) - window_size + 1):
+        window = input_data[i:i+window_size]
+        window_average = sum(window)/window_size
+        result.append(window_average)
+        
+    return np.array(result)
+    
+def rollify_training(X, window_size):
+    X_features = X.shape[2]
+    
+    X_roll_len = X.shape[1] - window_size + 1
+    
+    X_roll = np.empty((len(X), X_roll_len, X_features))
+    
+    for ii in range(len(X)):
+        for jj in range(X_features):
+            X_roll[ii,:,jj] = roll_average(X[ii,:,jj], window_size)
+            
+    return X_roll
+
+
+def load_data(direc_name, time_steps, input_list, window_size):
 
     total_input = []
     total_output = []
@@ -88,62 +135,65 @@ def load_data(direc_name, time_steps, include_cn2):
     # Files expected
     
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
+    num_features = len(input_list)
+    
+    print(f'Parameter List: {input_list}')
     
     
     for ii, name in enumerate(directory_list):
+
         df = pd.read_csv(f'{direc_name}/{name}')
-        
-        if (include_cn2):
-            dataset_weather = np.empty((time_steps, 5))
-        else:
-            dataset_weather = np.empty((time_steps, 4))
-            
+    
+        dataset_weather = np.empty((time_steps, num_features))  
         dataset_output = np.empty((1, 1))
         
         ###### INPUT DATA #######
         
-        # In the 0th input, temperature
-        dataset_weather[:,0] = df["temperature"].to_numpy()
-        # In the 1st input, relative humidity (%)
-        dataset_weather[:,1] = df["relative_humidity"].to_numpy()
-        # In the 2nd input, standard pressure 
-        dataset_weather[:,2] = df["pressure_station"].to_numpy()
-        #In the 3rd input, Solar Radiation 
-        dataset_weather[:,3] = df["solar_radiation"].to_numpy()
-        
-        # Okay, let's try including the CN^2 as proof of principle
-        if (include_cn2):
-            dataset_weather[:,4] = np.log10(df["CN2"].to_numpy())
- 
+        for ii, colName in enumerate(input_list):
+            if(colName=='CN2'):
+                dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
+            else:
+                dataset_weather[:,ii] = df[colName].to_numpy()
+            
         total_input.append(dataset_weather)
         
         ###### OUTPUT DATA #######
         
+        
         # In the 0th output, CN2 FUTURE
-        dataset_output[:,0] = np.log10(eval(df["CN2-R0 Future"][1]))
-        # In the 1st output, R0
-        # dataset_output[:,1] = df["CN2-R0 Future"][2]  
-    
+        dataset_output[:,0] = np.log10(eval(df["Unnamed: 17"][1]))
+
         total_output.append(dataset_output)
         
     total_input = np.array(total_input)
     total_output = np.array(total_output)
     
+    # Apply rolling average onto the input data
+    total_input = rollify_training(total_input, window_size)
+    
+    
     # Apply normalization to each input entry
-    
-    total_input[:,:,0] = norm_data(total_input[:,:,0])
-    total_input[:,:,1] = norm_data(total_input[:,:,1])
-    total_input[:,:,2] = norm_data(total_input[:,:,2])
-    total_input[:,:,3] = norm_data(total_input[:,:,3])
-    
+    for ii in range(num_features):
+        total_input[:,:,ii] = norm_data(total_input[:,:,ii])
+        
+        
+    # Apply normalization to each output entry
     total_output[:,:,0] = norm_data(total_output[:,:,0])
-   # total_output[:,:,1] = norm_data(total_output[:,:,1])
-    
+
     return total_input, total_output
 
+    
 
 if __name__ == '__main__':
-    
+
+    # parse through slurm array (for use w/ bash script. You can set shift to be a random integer for the purposes of testing locally)
+
+    parser=argparse.ArgumentParser(description='test')
+    parser.add_argument('--ii', dest='ii', type=int,
+        default=None, help='')
+    args = parser.parse_args()
+    shift = args.ii
+
     # Loads up and prepares the data for training
 
     stream = open(f"configs/train.yaml", 'r')
@@ -156,18 +206,14 @@ if __name__ == '__main__':
     random.seed(seed)
 
     # Load up model params
+    
     model_name = cnfg['model_name']
     model_name += f"_{seed}"
     nn_type = cnfg['nn_type']
     neurons = cnfg['neurons']
     hidLayers = cnfg['hidLayers']
-
-    include_cn2 = cnfg['include_cn2']
-    
-    # If we include cn2 value, adjust number of features to 5
-    
-    if (include_cn2):
-        num_of_features = 5
+    window_size = cnfg['window_size'] # This process is the identity if it is set to 1
+    series_length = cnfg['series_length']
     
     model_path = f'models/{model_name}'
 
@@ -179,10 +225,21 @@ if __name__ == '__main__':
 
     # Load up training params
     epochs = cnfg['epochs']
+    
     init_lr = cnfg['init_lr']
     patience = cnfg['patience'] # For how many epochs do we wait before we start adjusting the LR 
     lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
     batch_size = cnfg['batch_size']
+    
+    # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
+    feature_subsets = get_column_subsets()
+    feature_subset = feature_subsets[shift]
+    number_of_features = len(feature_subset)
+    
+    print(f'Parameters used: {feature_subset}. Saving as txt...')
+    with open(f'params/{model_name}.txt','w') as txt_file:
+        txt_file.write(str(feature_subset))
+    
 
     # Compute total number of samples contained in the subfolder. This'll let us calculate the number of examples that will be used for the training 
     sizeOfFiles = len([name for name in os.listdir(f'{direc}/.')]) # Global parameter
@@ -193,11 +250,13 @@ if __name__ == '__main__':
     print(f"Number of training examples: {num_examples_train}")
     
     # We can begin proper. Load up the dataset and get ready to train!!
-    
-    X,y = load_data(direc,12)
+
+    X,y = load_data(direc, series_length, feature_subset, window_size)
     X_train, y_train = X[0:num_examples_train], y[0:num_examples_train]
     
-    model = rn_network(nn_type, neurons, 1, 4, hidLayers, model_name)
+    print(f"Training data rolled with window size of {window_size} and normalized. Let us begin the training! ")
+    
+    model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=1)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7, verbose = 1)
     
@@ -205,6 +264,7 @@ if __name__ == '__main__':
     
     adam_optimizer=optimizers.Adam(learning_rate=init_lr)
     model.mynn.compile(loss='mse', optimizer=adam_optimizer)
+
     hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr], verbose=2)
     
     # Save loss as a csv file for future reference 
@@ -215,9 +275,7 @@ if __name__ == '__main__':
         complete_loss.to_csv(f)
         
     
-        
     ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
-
 
 
 
