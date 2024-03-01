@@ -161,7 +161,7 @@ def load_data(direc_name, time_steps, input_list, window_size):
         
         
         # In the 0th output, CN2 FUTURE
-        dataset_output[:,0] = np.log10(eval(df["Unnamed: 17"][1]))
+        dataset_output[:,0] = np.log10(eval(df["CN2-R0 Future"][1]))
 
         total_output.append(dataset_output)
         
@@ -193,6 +193,9 @@ if __name__ == '__main__':
         default=None, help='')
     args = parser.parse_args()
     shift = args.ii
+    
+    shift = 1
+
 
     # Loads up and prepares the data for training
 
@@ -259,13 +262,13 @@ if __name__ == '__main__':
     model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=1)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7, verbose = 1)
-    
+    early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
     # Compile and run the model 
     
     adam_optimizer=optimizers.Adam(learning_rate=init_lr)
     model.mynn.compile(loss='mse', optimizer=adam_optimizer)
 
-    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr], verbose=2)
+    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
     
     # Save loss as a csv file for future reference 
     
