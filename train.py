@@ -26,6 +26,9 @@ import os
 import yaml
 from yaml import Loader
 
+from keras import backend as K
+from tensorflow.keras.preprocessing.sequence import pad_sequences 
+
 
 # Class used to plot each epoch of the network. This is so that we get live feedback on how well our network is learning at each epoch. Credit to this medium article (https://medium.com/geekculture/how-to-plot-model-loss-while-training-in-tensorflow-9fa1a1875a5_) and to the QPT paper from before
 
@@ -77,6 +80,14 @@ class PlotLearning(tf.keras.callbacks.Callback):
         
         print('Saved plot of most recent training epoch to disk')
         
+        
+def mse_trans(y_true, y_pred):
+
+    loss = K.mean(K.square(y_pred - y_true), axis=-1)
+    loss_true = tf.reduce_mean(loss)
+    
+    return loss_true
+        
 
 def get_column_subsets():
     column_names = ['pressure_station', 'pressure_sea','dew_point','temperature', 'cloud_cover_8']
@@ -114,6 +125,7 @@ def roll_average(input_data, window_size):
     return np.array(result)
     
 def rollify_training(X, window_size):
+    
     X_features = X.shape[2]
     
     X_roll_len = X.shape[1] - window_size + 1
@@ -127,7 +139,7 @@ def rollify_training(X, window_size):
     return X_roll
 
 
-def load_data(direc_name, time_steps, input_list, window_size):
+def load_data(direc_name, time_steps, input_list, window_size, full_time_series=False, forecast_len=1):
 
     total_input = []
     total_output = []
@@ -137,6 +149,9 @@ def load_data(direc_name, time_steps, input_list, window_size):
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
     
+    
+        
+    
     print(f'Parameter List: {input_list}')
     
     
@@ -144,8 +159,8 @@ def load_data(direc_name, time_steps, input_list, window_size):
 
         df = pd.read_csv(f'{direc_name}/{name}')
     
-        dataset_weather = np.empty((time_steps, num_features))  
-        dataset_output = np.empty((1, 1))
+        dataset_weather = np.empty((time_steps, num_features))
+        dataset_output = np.empty((forecast_len, 1))
         
         ###### INPUT DATA #######
         
@@ -159,9 +174,9 @@ def load_data(direc_name, time_steps, input_list, window_size):
         
         ###### OUTPUT DATA #######
         
-        
         # In the 0th output, CN2 FUTURE
-        dataset_output[:,0] = np.log10(eval(df["CN2-R0 Future"][1]))
+        
+        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
 
         total_output.append(dataset_output)
         
@@ -177,12 +192,30 @@ def load_data(direc_name, time_steps, input_list, window_size):
         total_input[:,:,ii] = norm_data(total_input[:,:,ii])
         
         
+    # If we are working with time series prediction, apply rolling on output time series
+    
+    if (full_time_series):
+        total_output = rollify_training(total_output, window_size)
+        
     # Apply normalization to each output entry
     total_output[:,:,0] = norm_data(total_output[:,:,0])
-
-    return total_input, total_output
-
     
+    
+    # Finally, if we're working with a time series, let's pad out the output array with 0s
+    
+    if (full_time_series):
+        window_time_steps_input = total_input.shape[1]
+        window_time_steps_output = total_output.shape[1]
+        
+        total_output_padded = np.zeros((total_input.shape[0], window_time_steps_input, 1))
+    
+        total_output_padded[:,:window_time_steps_output, 0] = total_output[:,:,0]
+        
+        return total_input, total_output_padded
+    
+    else:
+        return total_input, total_output
+
 
 if __name__ == '__main__':
 
@@ -194,9 +227,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     shift = args.ii
     
-    shift = 1
-
-
     # Loads up and prepares the data for training
 
     stream = open(f"configs/train.yaml", 'r')
@@ -217,6 +247,8 @@ if __name__ == '__main__':
     hidLayers = cnfg['hidLayers']
     window_size = cnfg['window_size'] # This process is the identity if it is set to 1
     series_length = cnfg['series_length']
+    forecast_length = cnfg['forecast']
+    full_time_series = True
     
     model_path = f'models/{model_name}'
 
@@ -236,7 +268,9 @@ if __name__ == '__main__':
     
     # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
     feature_subsets = get_column_subsets()
-    feature_subset = feature_subsets[shift]
+    #feature_subset = feature_subsets[shift]
+    feature_subset = ['relative_humidity', 'solar_radiation', 'CN2', 'temperature']
+
     number_of_features = len(feature_subset)
     
     print(f'Parameters used: {feature_subset}. Saving as txt...')
@@ -254,18 +288,19 @@ if __name__ == '__main__':
     
     # We can begin proper. Load up the dataset and get ready to train!!
 
-    X,y = load_data(direc, series_length, feature_subset, window_size)
+    X,y = load_data(direc, series_length, feature_subset, window_size, full_time_series, forecast_length)
     X_train, y_train = X[0:num_examples_train], y[0:num_examples_train]
-    
+
     print(f"Training data rolled with window size of {window_size} and normalized. Let us begin the training! ")
     
+    
     model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name)
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=1)
-    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7, verbose = 1)
+    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
     early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
     # Compile and run the model 
     
-    adam_optimizer=optimizers.Adam(learning_rate=init_lr)
+    adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
     model.mynn.compile(loss='mse', optimizer=adam_optimizer)
 
     hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
@@ -276,6 +311,7 @@ if __name__ == '__main__':
 
     with open(f"loss/loss_{model_name}.csv", "wb") as f:
         complete_loss.to_csv(f)
+        
         
     
     ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###

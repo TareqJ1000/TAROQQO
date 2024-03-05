@@ -1,19 +1,20 @@
-model_name: 'gruRNN_Feb28'
-nn_type: 1
-neurons: 50
+model_name: 'timeSeriesPred_double'
+nn_type: 3
+neurons: 80
 hidLayers: 2
 window_size: 3
 series_length: 12
+forecast: 6
 
-direc_name: OneHourAheadMissingData
+direc_name: timeSeries6
 trainTest_split: 0.90
 trainVal_split: 0.15
 
 epochs: 1000
-init_lr: 1.e-3
+init_lr: 5.e-4
 patience: 30
 lr_reduce_factor: 0.5
-batch_size: 32
+batch_size: 8
 
 
 
