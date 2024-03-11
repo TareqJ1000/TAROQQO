@@ -3,7 +3,7 @@
 """
 Code which initializes the training
 """
-from nn_architecture import rn_network
+from nn_architecture import rn_network, feedback
 
 import tensorflow as tf
 
@@ -105,11 +105,8 @@ def get_column_subsets():
     
     return all_subsets
 
-
 def norm_data(x):
-    for ii in range(len(x)):
-        x[ii] = (x[ii] - np.min(x))/(np.max(x) - np.min(x))
-    return x
+    return (x - np.min(x))/(np.max(x) - np.min(x))
 
 # This applies a rolling average on the dataset 
 
@@ -149,8 +146,6 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
     
-    
-        
     
     print(f'Parameter List: {input_list}')
     
@@ -279,6 +274,7 @@ if __name__ == '__main__':
     
 
     # Compute total number of samples contained in the subfolder. This'll let us calculate the number of examples that will be used for the training 
+    
     sizeOfFiles = len([name for name in os.listdir(f'{direc}/.')]) # Global parameter
     print(f"Number of files:{int(sizeOfFiles)}")
     num_examples_train = int(sizeOfFiles*trainTest_split)
@@ -293,17 +289,19 @@ if __name__ == '__main__':
 
     print(f"Training data rolled with window size of {window_size} and normalized. Let us begin the training! ")
     
+    model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=series_length-window_size+1)
+   
+    #model = feedback(40, 10, 1, 'floofy', 4)
     
-    model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
     early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
+    
     # Compile and run the model 
     
     adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
-    model.mynn.compile(loss='mse', optimizer=adam_optimizer)
-
-    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
+    model.compile(loss='mse', optimizer=adam_optimizer, run_eagerly=True)
+    hist = model.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
     
     # Save loss as a csv file for future reference 
     
