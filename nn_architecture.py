@@ -10,12 +10,18 @@ import tensorflow as tf
 
 from tensorflow.keras import Sequential
 from tensorflow.keras import Model
-from tensorflow.keras.layers import Dense,LSTM,GRU, GRUCell
+from tensorflow.keras.layers import Dense,LSTM,GRU, GRUCell, Bidirectional
 from tensorflow.keras import optimizers # to choose more advanced optimizers like 'adam'
 from tensorflow.keras.activations import tanh
 
 
+import numpy as np
+
+
 class rn_network(tf.Module):
+    
+# Here, we implement direct RNN that return forecasted time series as output
+
     def __init__(self, nn_type, units, num_features, num_inputs,num_hidden,name,forecast_len=1):
         super(rn_network, self).__init__()
         
@@ -55,12 +61,51 @@ class rn_network(tf.Module):
             for ii in range(num_hidden-1):
                 conv.add(GRU(units, return_sequences=True))
             conv.add(GRU(units, return_sequences=False))
-            conv.add(Dense(num_features*forecast_len, activation='tanh'))
+            conv.add(Dense(num_features*forecast_len, activation='relu'))
             conv.add(tf.keras.layers.Reshape([forecast_len, num_features]))
-
+            
+        if (nn_type==5): # RNN with bidirectional layers
+            conv.add(Bidirectional(GRU(units,input_shape=(None, num_inputs), return_sequences=True)))
+            conv.add(Bidirectional(GRU(units,return_sequences=True)))
+            conv.add(Bidirectional(GRU(units)))
+            conv.add(Dense(num_features*forecast_len, activation='relu'))
+            conv.add(tf.keras.layers.Reshape([forecast_len, num_features]))
+                     
         self.mynn = conv
         
+
+
+# Implementing an animal RNN-GAN. This is a rough approximation of the implementation observed in (https://arxiv.org/abs/1611.09904) 
+
+class rnn_gan(tf.Module):
     
+    def __init__(self, units, num_layers, num_inputs,  name, num_features, forecast_len):
+        super(rnn_gan, self).__init__()
+        self.units = units
+        self.num_layers = num_layers
+        self.num_features = num_features 
+        
+       # The generator object 
+            
+        gen_model = Sequential(name=name)
+        gen_model.add(GRU(units, input_shape=(None, num_inputs), return_sequences=True))
+        gen_model.add(GRU(units, return_sequences=False))
+        gen_model.add(Dense(num_features*forecast_len, activation='relu'))
+        gen_model.add(tf.keras.layers.Reshape([forecast_len, num_features]))
+        
+        self.gen_model = gen_model
+        
+        
+        # The discriminator object
+        
+        dis_model = Sequential(name=name)
+        dis_model.add(Bidirectional(GRU(units,  input_shape =  (forecast_len, num_features), return_sequences=True)))
+        dis_model.add(Bidirectional(GRU(units)))
+        dis_model.add(Dense(1))
+        
+        self.dis_model = dis_model 
+        
+
 # Implementing an autoregressive NN (from Tensorflow)
 
 class feedback(tf.keras.Model):
@@ -96,20 +141,44 @@ class feedback(tf.keras.Model):
             predictions = tf.stack(prediction) # prediction shape => (time, batch, features)
             predictions = tf.transpose(predictions, [1,0,2]) # prediction => (batch, time, features)
             return predictions
+        
+        
 
-            
+        
+def norm_data(x):
+    return (x - np.min(x))/(np.max(x) - np.min(x))
+
+if __name__=='__main__':
+    my_first_rnn = rnn_gan(80, 2,4, 'spiffy', 4, 12)
+    random_noise = np.random.normal(size=(1,12,4))
+    
+    # normalize each input feature seperately
+    
+    for ii in range(4):
+        random_noise[:,:,ii] = norm_data(random_noise[:,:,ii])
+        
+    # Let's try to output the prediction of the network 
+    
+    pred = my_first_rnn.gen_model(random_noise)
+    
+    print(my_first_rnn.gen_model(random_noise))
+    
+    # What decision does our discriminator make? 
+    
+    decision = my_first_rnn.dis_model(pred)
+    
+    
+    
+    
+        
+    
+        
         
     
     
     
-# riggy = feedback(40, 12, 3, 'goggo', 4)
         
-#riggo = rn_network(1,100,2,4,1,'riggy')
-#riggo.mynn.summary()
-
-        
-#riggo = rn_network(0,100,2,4,20,'riggy')
-
+    
         
         
             
