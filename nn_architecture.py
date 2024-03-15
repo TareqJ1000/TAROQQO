@@ -15,7 +15,11 @@ from tensorflow.keras import optimizers # to choose more advanced optimizers lik
 from tensorflow.keras.activations import tanh
 
 
+
 import numpy as np
+
+
+cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
 
 
 class rn_network(tf.Module):
@@ -95,7 +99,6 @@ class rnn_gan(tf.Module):
         
         self.gen_model = gen_model
         
-        
         # The discriminator object
         
         dis_model = Sequential(name=name)
@@ -142,8 +145,7 @@ class feedback(tf.keras.Model):
             predictions = tf.transpose(predictions, [1,0,2]) # prediction => (batch, time, features)
             return predictions
         
-        
-
+    
         
 def norm_data(x):
     return (x - np.min(x))/(np.max(x) - np.min(x))
@@ -166,6 +168,8 @@ if __name__=='__main__':
     # What decision does our discriminator make? 
     
     decision = my_first_rnn.dis_model(pred)
+    
+
     
     
     
