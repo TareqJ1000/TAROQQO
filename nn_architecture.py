@@ -14,9 +14,11 @@ from tensorflow.keras.layers import Dense,LSTM,GRU, GRUCell, Bidirectional
 from tensorflow.keras import optimizers # to choose more advanced optimizers like 'adam'
 from tensorflow.keras.activations import tanh
 
-
-
 import numpy as np
+from IPython import display
+import os
+
+import time 
 
 
 cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -83,11 +85,13 @@ class rn_network(tf.Module):
 
 class rnn_gan(tf.Module):
     
-    def __init__(self, units, num_layers, num_inputs,  name, num_features, forecast_len):
+    def __init__(self, units, num_layers, num_inputs,  name, num_features, forecast_len, checkpoint_dir, checkpoint_pre='ckpt'):
         super(rnn_gan, self).__init__()
         self.units = units
         self.num_layers = num_layers
         self.num_features = num_features 
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_pre = checkpoint_pre
         
        # The generator object 
             
@@ -107,6 +111,65 @@ class rnn_gan(tf.Module):
         dis_model.add(Dense(1))
         
         self.dis_model = dis_model 
+        
+        
+        def gen_loss(self, fake_output):
+            return cross_entropy(tf.ones_like(fake_output), fake_output)
+
+        def dis_loss(self, fake_output, real_output):
+            real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+            fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
+            total_loss = real_loss + fake_loss
+            return total_loss
+        
+        
+        # So this is a way to create our own, custom training steps 
+
+        @tf.function
+        def train_step(self, data, generator_optimizer, discriminator_optimizer):
+            data_shape = tf.shape(data)
+            noise = tf.random.noise(size=data_shape, mean=0.5, stddev=1.0)
+        
+            with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+                generated_weather = self.gen_model(noise, training=True)
+                
+                real_output = self.dis_model(data, training=True)
+                fake_output = self.dis_model(generated_weather, training=True)
+                
+                generator_loss = gen_loss(fake_output)
+                discriminator_loss = dis_loss(real_output)
+            
+            gradients_of_generator = gen_tape.gradient(generator_loss, gen_model.trainable_variables)
+            gradients_of_discriminator = disc_tape.gradient(discriminator_loss, dis_model.trainable_variables)
+            
+            generator_optimizer.apply_gradients(zip(gradients_of_generator, gen_model.trainable_variables))
+            discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, dis_model.trainable_variables))
+            
+        
+        def train(self, dataset, epochs, generator_optimizer, discriminator_optimizer, save_epochs=1):
+            
+            # Initialize checkpoint
+            checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer, discriminator_optimizer=discriminator_optimizer)
+            checkpoint_savedir = os.path.join(self.checkout_dir, self.checkout_pre)
+            
+            for epochs in range(epochs):
+                start = time.time()
+            
+                for data_batch in dataset:
+                    train_step(data_batch)
+            
+                if (epochs+1) % save_epochs == 0:
+                    checkpoint.save(file_prefix=checkpoint_savedir) 
+                
+                print ('Time for epoch {} is {} sec'.format(epochs + 1, time.time()-start))
+
+                
+                
+                
+                    
+                
+            
+    
         
 
 # Implementing an autoregressive NN (from Tensorflow)
