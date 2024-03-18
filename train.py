@@ -3,7 +3,7 @@
 """
 Code which initializes the training
 """
-from nn_architecture import rn_network, feedback
+from nn_architecture import rn_network
 
 import tensorflow as tf
 
@@ -29,6 +29,7 @@ from yaml import Loader
 from keras import backend as K
 from tensorflow.keras.preprocessing.sequence import pad_sequences 
 
+from augmentation import jitter, scaling, magnitude_warp, window_slice, window_warp
 
 # Class used to plot each epoch of the network. This is so that we get live feedback on how well our network is learning at each epoch. Credit to this medium article (https://medium.com/geekculture/how-to-plot-model-loss-while-training-in-tensorflow-9fa1a1875a5_) and to the QPT paper from before
 
@@ -146,7 +147,6 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
     
-    
     print(f'Parameter List: {input_list}')
     
     
@@ -188,6 +188,7 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
         
         
     # If we are working with time series prediction, apply rolling on output time series
+    # UPDATE: Maybe this isn't the best idea, if we think of rolling average as a regularization technique
     
     if (full_time_series):
         total_output = rollify_training(total_output, window_size)
@@ -203,14 +204,12 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
         window_time_steps_output = total_output.shape[1]
         
         total_output_padded = np.zeros((total_input.shape[0], window_time_steps_input, 1))
-    
-        total_output_padded[:,:window_time_steps_output, 0] = total_output[:,:,0]
+        total_output_padded[:, :window_time_steps_output, 0] = total_output[:,:,0]
         
         return total_input, total_output_padded
     
     else:
         return total_input, total_output
-
 
 if __name__ == '__main__':
 
@@ -243,36 +242,31 @@ if __name__ == '__main__':
     window_size = cnfg['window_size'] # This process is the identity if it is set to 1
     series_length = cnfg['series_length']
     forecast_length = cnfg['forecast']
-    full_time_series = True
-    
-    model_path = f'models/{model_name}'
-
+    augument_technique = cnfg['augument_technique']
     # Load up how we wanna split up our data
     direc_subfolder = cnfg['direc_name']
     direc = f'Batched Data/{direc_subfolder}'
     trainTest_split = cnfg['trainTest_split'] # Split between data seen during training and unseen data for testing 
     trainVal_split = cnfg['trainVal_split'] # Split between training data and validation data
-
     # Load up training params
     epochs = cnfg['epochs']
-    
     init_lr = cnfg['init_lr']
     patience = cnfg['patience'] # For how many epochs do we wait before we start adjusting the LR 
     lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
     batch_size = cnfg['batch_size']
-    
     # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
     feature_subsets = get_column_subsets()
     #feature_subset = feature_subsets[shift]
     feature_subset = ['relative_humidity', 'solar_radiation', 'CN2', 'temperature']
-
     number_of_features = len(feature_subset)
+    full_time_series = True
+    model_path = f'models/{model_name}'
+    
     
     print(f'Parameters used: {feature_subset}. Saving as txt...')
     with open(f'params/{model_name}.txt','w') as txt_file:
         txt_file.write(str(feature_subset))
     
-
     # Compute total number of samples contained in the subfolder. This'll let us calculate the number of examples that will be used for the training 
     
     sizeOfFiles = len([name for name in os.listdir(f'{direc}/.')]) # Global parameter
@@ -280,19 +274,45 @@ if __name__ == '__main__':
     num_examples_train = int(sizeOfFiles*trainTest_split)
 
     # Note this number down!! 
-    print(f"Number of training examples: {num_examples_train}")
+    print(f"Number of training+validation examples: {num_examples_train}")
     
     # We can begin proper. Load up the dataset and get ready to train!!
-
+    
     X,y = load_data(direc, series_length, feature_subset, window_size, full_time_series, forecast_length)
-    X_train, y_train = X[0:num_examples_train], y[0:num_examples_train]
-
-    print(f"Training data rolled with window size of {window_size} and normalized. Let us begin the training! ")
+    X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
     
+    total_len_train = len(X_data)
+    num_examples_val = int(total_len_train*(1-trainVal_split))
+    
+    # We will be applying regularization seperately 
+    
+    X_train, y_train = X_data[0:num_examples_val], y_data[0:num_examples_val]
+    X_val, y_val = X_data[num_examples_val:], y_data[num_examples_val:]
+    
+    print(f"Training data rolled with window size of {window_size} and normalized! Applying {augument_technique} augumentation technqiue... ")
+    
+    if augument_technique=='jitter':
+        X_aug = jitter(X_train, sigma=cnfg['jitter_sigma'])
+        y_aug = y_train
+        
+        X_train = np.concatenate((X_train, X_aug))
+        y_train = np.concatenate((y_train, y_aug))
+        
+    if augument_technique=='window_warp':
+        X_aug = window_warp(X_train, window_ratio=cnfg['windowWarp_ratio'])
+        y_aug = y_train 
+        
+        X_train = np.concatenate((X_train, X_aug))
+        y_train = np.concatenate((y_train, y_aug))
+        
+    if augument_technique=='window_slice':
+        X_aug = window_slice(X_train, reduce_ratio=cnfg['reduce_ratio'])
+        y_aug = y_train
+        
+        X_train = np.concatenate((X_train, X_aug))
+        y_train = np.concatenate((y_train, y_aug))
+        
     model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=series_length-window_size+1)
-   
-    #model = feedback(40, 10, 1, 'floofy', 4)
-    
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
     early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
@@ -300,8 +320,8 @@ if __name__ == '__main__':
     # Compile and run the model 
     
     adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
-    model.compile(loss='mse', optimizer=adam_optimizer, run_eagerly=True)
-    hist = model.fit(X_train, y_train, batch_size=batch_size, validation_split=trainVal_split, epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
+    model.mynn.compile(loss='mse', optimizer=adam_optimizer)
+    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
     
     # Save loss as a csv file for future reference 
     
@@ -310,8 +330,6 @@ if __name__ == '__main__':
     with open(f"loss/loss_{model_name}.csv", "wb") as f:
         complete_loss.to_csv(f)
         
-        
-    
     ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
 
 

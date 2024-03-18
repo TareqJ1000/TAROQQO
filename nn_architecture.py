@@ -18,7 +18,11 @@ import numpy as np
 from IPython import display
 import os
 
+import matplotlib.pyplot as plt
+
 import time 
+
+import pandas as pd
 
 
 cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -98,7 +102,7 @@ class rnn_gan(tf.Module):
         gen_model = Sequential(name=name)
         gen_model.add(GRU(units, input_shape=(None, num_inputs), return_sequences=True))
         gen_model.add(GRU(units, return_sequences=False))
-        gen_model.add(Dense(num_features*forecast_len, activation='relu'))
+        gen_model.add(Dense(num_features*forecast_len, activation='tanh'))
         gen_model.add(tf.keras.layers.Reshape([forecast_len, num_features]))
         
         self.gen_model = gen_model
@@ -113,103 +117,100 @@ class rnn_gan(tf.Module):
         self.dis_model = dis_model 
         
         
-        def gen_loss(self, fake_output):
-            return cross_entropy(tf.ones_like(fake_output), fake_output)
+    def gen_loss(self, fake_output):
+        return cross_entropy(tf.ones_like(fake_output), fake_output)
 
-        def dis_loss(self, fake_output, real_output):
-            real_loss = cross_entropy(tf.ones_like(real_output), real_output)
-            fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
-            total_loss = real_loss + fake_loss
-            return total_loss
-        
-        
-        # So this is a way to create our own, custom training steps 
-
-        @tf.function
-        def train_step(self, data, generator_optimizer, discriminator_optimizer):
-            data_shape = tf.shape(data)
-            noise = tf.random.noise(size=data_shape, mean=0.5, stddev=1.0)
-        
-            with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-                generated_weather = self.gen_model(noise, training=True)
-                
-                real_output = self.dis_model(data, training=True)
-                fake_output = self.dis_model(generated_weather, training=True)
-                
-                generator_loss = gen_loss(fake_output)
-                discriminator_loss = dis_loss(real_output)
-            
-            gradients_of_generator = gen_tape.gradient(generator_loss, gen_model.trainable_variables)
-            gradients_of_discriminator = disc_tape.gradient(discriminator_loss, dis_model.trainable_variables)
-            
-            generator_optimizer.apply_gradients(zip(gradients_of_generator, gen_model.trainable_variables))
-            discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, dis_model.trainable_variables))
-            
-        
-        def train(self, dataset, epochs, generator_optimizer, discriminator_optimizer, save_epochs=1):
-            
-            # Initialize checkpoint
-            checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer, discriminator_optimizer=discriminator_optimizer)
-            checkpoint_savedir = os.path.join(self.checkout_dir, self.checkout_pre)
-            
-            for epochs in range(epochs):
-                start = time.time()
-            
-                for data_batch in dataset:
-                    train_step(data_batch)
-            
-                if (epochs+1) % save_epochs == 0:
-                    checkpoint.save(file_prefix=checkpoint_savedir) 
-                
-                print ('Time for epoch {} is {} sec'.format(epochs + 1, time.time()-start))
-
-                
-                
-                
-                    
-                
-            
+    def dis_loss(self, fake_output, real_output):
+        real_loss = cross_entropy(tf.ones_like(real_output), real_output)
+        fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
+        total_loss = real_loss + fake_loss
+        return total_loss
     
-        
-
-# Implementing an autoregressive NN (from Tensorflow)
-
-class feedback(tf.keras.Model):
     
-    def __init__(self, units, out_steps, num_layers, name, num_features):
-        super().__init__()
-        self.out_steps = out_steps
-        self.units = units
-        self.lstm_cell = GRUCell(units)
-        self.lstm_rnn = tf.keras.layers.RNN(self.lstm_cell, input_shape=(None, 4), return_sequences=True)
-        self.dense = Dense(num_features)
-        
-    def warmup(self, inputs):
-            x, *state = self.lstm_rnn(inputs)
-            pred = self.dense(x)
-            return pred, state
+    # So this is a way to create our own, custom training steps 
+
+    @tf.function
+    def train_step(self, data, generator_optimizer, discriminator_optimizer):
+        data_shape = tf.shape(data)
+        noise = tf.math.tanh(tf.random.normal(data_shape, mean=0.5, stddev=1.0)) # scales the data to +- 1
     
-    def call(self, inputs, training=None):
-            predictions= []
-            # initialize the GRU state with an input
-            prediction, state = self.warmup(inputs) 
-            # insert the first prediction 
-            predictions.append(predictions)
-            # This is a single step time prediction
+        with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+            generated_weather = self.gen_model(noise, training=True)
             
-            # now compute the remaining predictions for the rest of time steps
-            for n in range(1, self.out_steps):
-                x = prediction
-                x, state = self.lstm_cell(x, states=state, training=training)
-                prediction = self.dense(x)
-                predictions.append(prediction)
+            real_output = self.dis_model(data, training=True)
+            fake_output = self.dis_model(generated_weather, training=True)
             
-            predictions = tf.stack(prediction) # prediction shape => (time, batch, features)
-            predictions = tf.transpose(predictions, [1,0,2]) # prediction => (batch, time, features)
-            return predictions
+            generator_loss = self.gen_loss(fake_output)
+            discriminator_loss = self.dis_loss(fake_output, real_output)
+        
+        gradients_of_generator = gen_tape.gradient(generator_loss, self.gen_model.trainable_variables)
+        gradients_of_discriminator = disc_tape.gradient(discriminator_loss,self.dis_model.trainable_variables)
+        
+        generator_optimizer.apply_gradients(zip(gradients_of_generator, self.gen_model.trainable_variables))
+        discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.dis_model.trainable_variables))
+        
+        return generator_loss, discriminator_loss
+    
+    # Plots the loss at each epoch 
+    
+    def plot_loss(self, gen_losses_epochs, dis_losses_epochs, num_epochs):
+        
+        # Create plot file if it doesn't exist 
+        if not os.path.exists(f'plots/{self.name}'):
+            os.makedirs(f'plots/{self.name}')
+        
+        epochs = np.arange(num_epochs+1)
+    
+        plt.figure()
+        plt.plot(epochs, gen_losses_epochs, label='generative loss', color='blue')
+        plt.plot(epochs, dis_losses_epochs, label='discriminator loss', color='orange')
+        plt.legend()
+        plt.savefig(f'plots/{self.name}/gen_loss_{num_epochs}.png', format='png',  bbox_inches='tight')
         
     
+    def train(self, dataset, epochs, generator_optimizer, discriminator_optimizer, save_epochs=1):
         
+        # Initialize checkpoint
+        checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer, discriminator_optimizer=discriminator_optimizer)
+        checkpoint_savedir = os.path.join(self.checkpoint_dir, self.checkpoint_pre)
+        
+        gen_losses = []
+        dis_losses = []
+        
+        gen_losses_epoch = []
+        dis_losses_epoch = []
+        
+        for epochs in range(epochs):
+            start = time.time()
+        
+            for data_batch in dataset:
+                gen_loss, dis_loss =  self.train_step(data_batch, generator_optimizer, discriminator_optimizer)
+                dis_losses.append(dis_loss)
+                gen_losses.append(gen_loss)
+                
+            if (epochs+1) % save_epochs == 0:
+                checkpoint.save(file_prefix=checkpoint_savedir) 
+                
+            dis_loss_epoch = dis_losses[-1]
+            gen_loss_epoch = gen_losses[-1]
+            
+            dis_losses_epoch.append(dis_loss_epoch)
+            gen_losses_epoch.append(gen_loss_epoch)
+
+            print ('Time for epoch {} is {} sec'.format(epochs + 1, time.time()-start))
+            print(f'Generative Loss: {gen_loss_epoch}, Discriminative Loss: {dis_loss_epoch}')
+            self.plot_loss(gen_losses_epoch, dis_losses_epoch, epochs)
+            print(f'Plotting loss to plots/{self.name} ...')
+        
+        # Save loss at end of training for future reference
+        
+        complete_loss = pd.DataFrame([gen_losses_epoch, dis_losses_epoch])
+        
+        
+        with open(f'loss/{self.name}.csv','wb') as f:
+            complete_loss.to_csv(f)
+        
+            
 def norm_data(x):
     return (x - np.min(x))/(np.max(x) - np.min(x))
 
