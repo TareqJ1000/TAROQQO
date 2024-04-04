@@ -106,8 +106,17 @@ def get_column_subsets():
     
     return all_subsets
 
+# Routine to normalize between 0 and 1 (Following the atmospheric turbulence paper)
+
 def norm_data(x):
-    return (x - np.min(x))/(np.max(x) - np.min(x))
+    minX = np.min(x[np.nonzero(x)])
+    maxX = np.max(x[np.nonzero(x)])
+    normed = (x - minX)/(maxX - minX)
+    
+    # Zero out any values that are above 1
+    normed[normed>1] =  0
+    
+    return normed, minX, maxX
 
 # This applies a rolling average on the dataset 
 
@@ -137,7 +146,59 @@ def rollify_training(X, window_size):
     return X_roll
 
 
-def load_data(direc_name, time_steps, input_list, window_size, full_time_series=False, forecast_len=1):
+# parse through slurm array (for use w/ bash script. You can set shift to be a random integer for the purposes of testing locally)
+
+parser=argparse.ArgumentParser(description='test')
+parser.add_argument('--ii', dest='ii', type=int,
+    default=None, help='')
+args = parser.parse_args()
+shift = args.ii
+
+# Loads up and prepares the data for training
+
+stream = open(f"configs/train{shift}.yaml", 'r')
+cnfg = yaml.load(stream, Loader=Loader)
+
+# Set a random seed for each training instance
+
+seed = random.randint(1000, 9999)
+print(f'seed: {seed}')
+random.seed(seed)
+
+# Load up model params
+
+model_name = cnfg['model_name']
+model_name += f"_{seed}"
+nn_type = cnfg['nn_type']
+neurons = cnfg['neurons']
+hidLayers = cnfg['hidLayers']
+window_size = cnfg['window_size'] # This process is the identity if it is set to 1
+series_length = cnfg['series_length']
+forecast_length = cnfg['forecast']
+augument_technique = cnfg['augument_technique']
+diff = cnfg['diff'] # Restricts the training set to 'highly varying' time series, as determined by the differences between the maximum and minimum of the output CN2
+# Load up how we wanna split up our data
+direc_subfolder = cnfg['direc_name']
+direc = f'Batched Data/{direc_subfolder}'
+trainTest_split = cnfg['trainTest_split'] # Split between data seen during training and unseen data for testing 
+trainVal_split = cnfg['trainVal_split'] # Split between training data and validation data
+# Load up training params
+epochs = cnfg['epochs']
+init_lr = cnfg['init_lr']
+patience = cnfg['patience'] # For how many epochs do we wait before we start adjusting the LR 
+lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
+batch_size = cnfg['batch_size']
+# Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
+#feature_subsets = get_column_subsets()
+#feature_subset = feature_subsets[shift]
+#feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
+feature_subset = cnfg['input_list']
+number_of_features = len(feature_subset)
+full_time_series = cnfg['full_time_series']
+model_path = f'models/{model_name}'
+
+
+def load_data(direc_name, time_steps, input_list, window_size, full_time_series=False, forecast_len=1, diff=0.0):
 
     total_input = []
     total_output = []
@@ -147,10 +208,11 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
     
+    
     print(f'Parameter List: {input_list}')
     
     
-    for ii, name in enumerate(directory_list):
+    for jj, name in enumerate(directory_list):
 
         df = pd.read_csv(f'{direc_name}/{name}')
     
@@ -161,20 +223,27 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
         
         for ii, colName in enumerate(input_list):
             if(colName=='CN2'):
-                dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
+                dataset_weather[:,ii] = np.log10(df[colName].to_numpy() + 1e-24)
             else:
                 dataset_weather[:,ii] = df[colName].to_numpy()
-            
-        total_input.append(dataset_weather)
-        
+                
         ###### OUTPUT DATA #######
         
         # In the 0th output, CN2 FUTURE
+                
+        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy()+1e-24)
         
-        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
-
-        total_output.append(dataset_output)
+        min_CN2_output = np.min(dataset_output)
+        max_CN2_output = np.max(dataset_output)
         
+        diff = np.abs(min_CN2_output - max_CN2_output)
+        if (diff > cnfg["diff"]):
+            total_input.append(dataset_weather)
+            total_output.append(dataset_output)
+            
+        if (jj%500==0):
+            print(f"Data loaded:{jj}")
+                
     total_input = np.array(total_input)
     total_output = np.array(total_output)
     
@@ -183,86 +252,49 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     
     
     # Apply normalization to each input entry
-    for ii in range(num_features):
-        total_input[:,:,ii] = norm_data(total_input[:,:,ii])
-        
-        
+    for ii in [0,1,3]:
+        total_input[:,:,ii],_,_ = norm_data(total_input[:,:,ii])
+
+    
     # If we are working with time series prediction, apply rolling on output time series
-    # UPDATE: Maybe this isn't the best idea, if we think of rolling average as a regularization technique
     
     if (full_time_series):
         total_output = rollify_training(total_output, window_size)
         
+        
+    # Before normalizing: store information about the minimum and maximum of the CN^2 ... useful to apply the inverse operation
+    
+    # min_CN2, max_CN2 = min(total_output), max(total_output)
+        
     # Apply normalization to each output entry
-    total_output[:,:,0] = norm_data(total_output[:,:,0])
+    # total_output[:,:,0], minOut, maxOut = norm_data(total_output[:,:,0])
     
     
     # Finally, if we're working with a time series, let's pad out the output array with 0s
     
-    if (full_time_series):
-        window_time_steps_input = total_input.shape[1]
-        window_time_steps_output = total_output.shape[1]
-        
-        total_output_padded = np.zeros((total_input.shape[0], window_time_steps_input, 1))
-        total_output_padded[:, :window_time_steps_output, 0] = total_output[:,:,0]
-        
-        return total_input, total_output_padded
+    window_time_steps_input = total_input.shape[1]
+    window_time_steps_output = total_output.shape[1]
+    dataset_len = int(total_input.shape[0])
+
+    total_output_padded = np.zeros((total_input.shape[0], window_time_steps_input, 1))
+
+    total_output_padded[:,:window_time_steps_output, 0] = total_output[:,:,0]
+
+    # At this point, normalize the CN2 for BOTH input and output. This is important!
     
+    ziggy = np.concatenate((total_input[:,:,2], total_output_padded[:,:,0]))
+    ziggy,minOut,maxOut = norm_data(ziggy)
+
+    total_input[0:dataset_len,:,2] = ziggy[0:dataset_len, :]
+    total_output_padded[0:dataset_len,:,0] = ziggy[dataset_len::,:]
+    
+    if(full_time_series):
+        return total_input, total_output_padded, minOut, maxOut 
     else:
-        return total_input, total_output
+        return total_input, total_output_padded[:,0], minOut, maxOut
 
 if __name__ == '__main__':
 
-    # parse through slurm array (for use w/ bash script. You can set shift to be a random integer for the purposes of testing locally)
-
-    parser=argparse.ArgumentParser(description='test')
-    parser.add_argument('--ii', dest='ii', type=int,
-        default=None, help='')
-    args = parser.parse_args()
-    shift = args.ii
-    
-    # Loads up and prepares the data for training
-
-    stream = open(f"configs/train.yaml", 'r')
-    cnfg = yaml.load(stream, Loader=Loader)
-
-    # Set a random seed for each training instance
-
-    seed = random.randint(1000, 9999)
-    print(f'seed: {seed}')
-    random.seed(seed)
-
-    # Load up model params
-    
-    model_name = cnfg['model_name']
-    model_name += f"_{seed}"
-    nn_type = cnfg['nn_type']
-    neurons = cnfg['neurons']
-    hidLayers = cnfg['hidLayers']
-    window_size = cnfg['window_size'] # This process is the identity if it is set to 1
-    series_length = cnfg['series_length']
-    forecast_length = cnfg['forecast']
-    augument_technique = cnfg['augument_technique']
-    # Load up how we wanna split up our data
-    direc_subfolder = cnfg['direc_name']
-    direc = f'Batched Data/{direc_subfolder}'
-    trainTest_split = cnfg['trainTest_split'] # Split between data seen during training and unseen data for testing 
-    trainVal_split = cnfg['trainVal_split'] # Split between training data and validation data
-    # Load up training params
-    epochs = cnfg['epochs']
-    init_lr = cnfg['init_lr']
-    patience = cnfg['patience'] # For how many epochs do we wait before we start adjusting the LR 
-    lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
-    batch_size = cnfg['batch_size']
-    # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
-    feature_subsets = get_column_subsets()
-    #feature_subset = feature_subsets[shift]
-    feature_subset = ['relative_humidity', 'solar_radiation', 'CN2', 'temperature']
-    number_of_features = len(feature_subset)
-    full_time_series = True
-    model_path = f'models/{model_name}'
-    
-    
     print(f'Parameters used: {feature_subset}. Saving as txt...')
     with open(f'params/{model_name}.txt','w') as txt_file:
         txt_file.write(str(feature_subset))
@@ -271,15 +303,15 @@ if __name__ == '__main__':
     
     sizeOfFiles = len([name for name in os.listdir(f'{direc}/.')]) # Global parameter
     print(f"Number of files:{int(sizeOfFiles)}")
-    num_examples_train = int(sizeOfFiles*trainTest_split)
-
-    # Note this number down!! 
-    print(f"Number of training+validation examples: {num_examples_train}")
     
     # We can begin proper. Load up the dataset and get ready to train!!
     
-    X,y = load_data(direc, series_length, feature_subset, window_size, full_time_series, forecast_length)
+    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, full_time_series, forecast_length, diff=diff)
+    num_examples_train = int(len(X)*trainTest_split)
     X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
+    
+    # Note this number down!! 
+    print(f"Number of training+validation examples: {num_examples_train}")
     
     total_len_train = len(X_data)
     num_examples_val = int(total_len_train*(1-trainVal_split))
@@ -312,6 +344,14 @@ if __name__ == '__main__':
         X_train = np.concatenate((X_train, X_aug))
         y_train = np.concatenate((y_train, y_aug))
         
+    if augument_technique=='magnitude_warp':
+        X_aug = magnitude_warp(X_train, sigma=cnfg['magnitude_sigma'], knot=cnfg['magnitude_knot'])
+        y_aug = y_train 
+        
+        X_train = np.concatenate((X_train, X_aug))
+        y_train = np.concatenate((y_train, y_aug))
+        
+        
     model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=series_length-window_size+1)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
@@ -321,7 +361,7 @@ if __name__ == '__main__':
     
     adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
     model.mynn.compile(loss='mse', optimizer=adam_optimizer)
-    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
+    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop]) # Verbose = 2
     
     # Save loss as a csv file for future reference 
     
