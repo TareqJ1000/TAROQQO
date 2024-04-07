@@ -9,9 +9,10 @@ input_list:  ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
 diff: -1
 full_time_series: True
 
-direc_name: 12HourOneMin
+direc_name: OneMinResolution
 trainTest_split: 0.90
 trainVal_split: 0.15
+num_of_examples: 5.e3
 
 epochs: 1000
 init_lr: 1.e-3

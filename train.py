@@ -12,7 +12,6 @@ from tensorflow.keras import optimizers
 import pandas as pd
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 from IPython.display import clear_output
 
 import numpy as np 
@@ -154,6 +153,12 @@ parser.add_argument('--ii', dest='ii', type=int,
 args = parser.parse_args()
 shift = args.ii
 
+# OMIT IN CLUSTER 
+
+# shift = 0
+
+# OMIT IN CLUSTER
+
 # Loads up and prepares the data for training
 
 stream = open(f"configs/train{shift}.yaml", 'r')
@@ -176,7 +181,7 @@ window_size = cnfg['window_size'] # This process is the identity if it is set to
 series_length = cnfg['series_length']
 forecast_length = cnfg['forecast']
 augument_technique = cnfg['augument_technique']
-diff = cnfg['diff'] # Restricts the training set to 'highly varying' time series, as determined by the differences between the maximum and minimum of the output CN2
+# diff = cnfg['diff'] # Restricts the training set to 'highly varying' time series, as determined by the differences between the maximum and minimum of the output CN2
 # Load up how we wanna split up our data
 direc_subfolder = cnfg['direc_name']
 direc = f'Batched Data/{direc_subfolder}'
@@ -191,14 +196,15 @@ batch_size = cnfg['batch_size']
 # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
 #feature_subsets = get_column_subsets()
 #feature_subset = feature_subsets[shift]
-#feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
+feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
 feature_subset = cnfg['input_list']
 number_of_features = len(feature_subset)
 full_time_series = cnfg['full_time_series']
 model_path = f'models/{model_name}'
+num_of_examples = eval(cnfg['num_of_examples'])
 
 
-def load_data(direc_name, time_steps, input_list, window_size, full_time_series=False, forecast_len=1, diff=0.0):
+def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, forecast_len=1):
 
     total_input = []
     total_output = []
@@ -215,6 +221,10 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     for jj, name in enumerate(directory_list):
 
         df = pd.read_csv(f'{direc_name}/{name}')
+        # rename columns to something more decipherable 
+        df = df.rename(columns={'Temp °C':'temperature', 'RH %':'relative_humidity', 'kJ/m^2':'solar_radiation'})
+        #print(df.columns)
+        #input()
     
         dataset_weather = np.empty((time_steps, num_features))
         dataset_output = np.empty((forecast_len, 1))
@@ -232,17 +242,15 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
         # In the 0th output, CN2 FUTURE
                 
         dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy()+1e-24)
-        
-        min_CN2_output = np.min(dataset_output)
-        max_CN2_output = np.max(dataset_output)
-        
-        diff = np.abs(min_CN2_output - max_CN2_output)
-        if (diff > cnfg["diff"]):
-            total_input.append(dataset_weather)
-            total_output.append(dataset_output)
+        total_input.append(dataset_weather)
+        total_output.append(dataset_output)
             
         if (jj%500==0):
             print(f"Data loaded:{jj}")
+            
+        if (jj>num_of_examples):
+            print("Finished loading data!")
+            break;
                 
     total_input = np.array(total_input)
     total_output = np.array(total_output)
@@ -250,17 +258,14 @@ def load_data(direc_name, time_steps, input_list, window_size, full_time_series=
     # Apply rolling average onto the input data
     total_input = rollify_training(total_input, window_size)
     
-    
-    # Apply normalization to each input entry
-    for ii in [0,1,3]:
+    # Apply normalization to each input entry (except for CN2, this needs to be handled specially)
+    for ii in np.delete(np.arange(len(input_list)), 2):
         total_input[:,:,ii],_,_ = norm_data(total_input[:,:,ii])
 
-    
     # If we are working with time series prediction, apply rolling on output time series
     
     if (full_time_series):
         total_output = rollify_training(total_output, window_size)
-        
         
     # Before normalizing: store information about the minimum and maximum of the CN^2 ... useful to apply the inverse operation
     
@@ -306,7 +311,7 @@ if __name__ == '__main__':
     
     # We can begin proper. Load up the dataset and get ready to train!!
     
-    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, full_time_series, forecast_length, diff=diff)
+    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, forecast_length)
     num_examples_train = int(len(X)*trainTest_split)
     X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
     
@@ -359,7 +364,9 @@ if __name__ == '__main__':
     
     # Compile and run the model 
     
-    adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
+    # adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
+    adam_optimizer=optimizers.Adam(learning_rate=init_lr)
+    
     model.mynn.compile(loss='mse', optimizer=adam_optimizer)
     hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop]) # Verbose = 2
     
