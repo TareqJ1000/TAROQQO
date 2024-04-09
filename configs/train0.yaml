@@ -5,7 +5,7 @@ hidLayers: 2
 window_size: 1
 series_length: 720 # For input
 forecast: 720 # For output
-input_list:  ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
+input_list:  ['relative_humidity', 'solar_radiation', 'CN2', 'temperature']
 diff: -1
 full_time_series: True
 

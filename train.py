@@ -155,7 +155,7 @@ shift = args.ii
 
 # OMIT IN CLUSTER 
 
-# shift = 0
+shift = 0
 
 # OMIT IN CLUSTER
 
@@ -196,7 +196,7 @@ batch_size = cnfg['batch_size']
 # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
 #feature_subsets = get_column_subsets()
 #feature_subset = feature_subsets[shift]
-feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
+#feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
 feature_subset = cnfg['input_list']
 number_of_features = len(feature_subset)
 full_time_series = cnfg['full_time_series']
@@ -217,15 +217,27 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     
     print(f'Parameter List: {input_list}')
     
+    num_of_zeros = 0
+    
     
     for jj, name in enumerate(directory_list):
 
         df = pd.read_csv(f'{direc_name}/{name}')
+        #print(name)
         # rename columns to something more decipherable 
         df = df.rename(columns={'Temp °C':'temperature', 'RH %':'relative_humidity', 'kJ/m^2':'solar_radiation'})
         #print(df.columns)
         #input()
-    
+        
+        # If the prior/future CN2 columns have zero values, then continue to next iteration 
+        if(df['CN2']==0).any() or (df['CN2 Future']==0).any():
+             #print(jj)
+             num_of_zeros += 1
+             print(f'number of zeros: {num_of_zeros}')
+             print('error data detected. Skipping to next value')
+             continue
+        
+        
         dataset_weather = np.empty((time_steps, num_features))
         dataset_output = np.empty((forecast_len, 1))
         
@@ -233,7 +245,7 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         
         for ii, colName in enumerate(input_list):
             if(colName=='CN2'):
-                dataset_weather[:,ii] = np.log10(df[colName].to_numpy() + 1e-24)
+                dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
             else:
                 dataset_weather[:,ii] = df[colName].to_numpy()
                 
@@ -241,7 +253,7 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         
         # In the 0th output, CN2 FUTURE
                 
-        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy()+1e-24)
+        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
         total_input.append(dataset_weather)
         total_output.append(dataset_output)
             
