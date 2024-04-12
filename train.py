@@ -28,7 +28,7 @@ from yaml import Loader
 from keras import backend as K
 from tensorflow.keras.preprocessing.sequence import pad_sequences 
 
-from augmentation import jitter, scaling, magnitude_warp, window_slice, window_warp
+# from augmentation import jitter, scaling, magnitude_warp, window_slice, window_warp
 
 # Class used to plot each epoch of the network. This is so that we get live feedback on how well our network is learning at each epoch. Credit to this medium article (https://medium.com/geekculture/how-to-plot-model-loss-while-training-in-tensorflow-9fa1a1875a5_) and to the QPT paper from before
 
@@ -81,13 +81,13 @@ class PlotLearning(tf.keras.callbacks.Callback):
         print('Saved plot of most recent training epoch to disk')
         
         
-def mse_trans(y_true, y_pred):
+def mse_mod(y_true, y_pred):
 
     loss = K.mean(K.square(y_pred - y_true), axis=-1)
     loss_true = tf.reduce_mean(loss)
     
-    return loss_true
-        
+    # We add a small epsillion to the MSE. This makes it so that we avoid crazy losses
+    return loss_true + 1e-8
 
 def get_column_subsets():
     column_names = ['pressure_station', 'pressure_sea','dew_point','temperature', 'cloud_cover_8']
@@ -181,7 +181,7 @@ window_size = cnfg['window_size'] # This process is the identity if it is set to
 series_length = cnfg['series_length']
 forecast_length = cnfg['forecast']
 augument_technique = cnfg['augument_technique']
-# diff = cnfg['diff'] # Restricts the training set to 'highly varying' time series, as determined by the differences between the maximum and minimum of the output CN2
+diff = cnfg['diff'] # Setting this option to -1 is the same as not starting it altogether 
 # Load up how we wanna split up our data
 direc_subfolder = cnfg['direc_name']
 direc = f'Batched Data/{direc_subfolder}'
@@ -213,7 +213,6 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
-    
     
     print(f'Parameter List: {input_list}')
     
@@ -254,8 +253,15 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         # In the 0th output, CN2 FUTURE
                 
         dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
-        total_input.append(dataset_weather)
-        total_output.append(dataset_output)
+        
+        # Let's consider wildly varying output data. Compute the difference between maximum and minimum. 
+        max_CN2 = np.max(np.abs(dataset_output[:,0]))
+        min_CN2 = np.min(np.abs(dataset_output[:,0]))
+        diff = np.abs(max_CN2 - min_CN2)
+        
+        if (diff >= cnfg['diff']):
+            total_input.append(dataset_weather)
+            total_output.append(dataset_output)
             
         if (jj%500==0):
             print(f"Data loaded:{jj}")
@@ -285,7 +291,6 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         
     # Apply normalization to each output entry
     # total_output[:,:,0], minOut, maxOut = norm_data(total_output[:,:,0])
-    
     
     # Finally, if we're working with a time series, let's pad out the output array with 0s
     
@@ -341,28 +346,28 @@ if __name__ == '__main__':
     print(f"Training data rolled with window size of {window_size} and normalized! Applying {augument_technique} augumentation technqiue... ")
     
     if augument_technique=='jitter':
-        X_aug = jitter(X_train, sigma=cnfg['jitter_sigma'])
+        #X_aug = jitter(X_train, sigma=cnfg['jitter_sigma'])
         y_aug = y_train
         
         X_train = np.concatenate((X_train, X_aug))
         y_train = np.concatenate((y_train, y_aug))
         
     if augument_technique=='window_warp':
-        X_aug = window_warp(X_train, window_ratio=cnfg['windowWarp_ratio'])
+        #X_aug = window_warp(X_train, window_ratio=cnfg['windowWarp_ratio'])
         y_aug = y_train 
         
         X_train = np.concatenate((X_train, X_aug))
         y_train = np.concatenate((y_train, y_aug))
         
     if augument_technique=='window_slice':
-        X_aug = window_slice(X_train, reduce_ratio=cnfg['reduce_ratio'])
+        #X_aug = window_slice(X_train, reduce_ratio=cnfg['reduce_ratio'])
         y_aug = y_train
         
         X_train = np.concatenate((X_train, X_aug))
         y_train = np.concatenate((y_train, y_aug))
         
     if augument_technique=='magnitude_warp':
-        X_aug = magnitude_warp(X_train, sigma=cnfg['magnitude_sigma'], knot=cnfg['magnitude_knot'])
+        #X_aug = magnitude_warp(X_train, sigma=cnfg['magnitude_sigma'], knot=cnfg['magnitude_knot'])
         y_aug = y_train 
         
         X_train = np.concatenate((X_train, X_aug))
@@ -379,8 +384,8 @@ if __name__ == '__main__':
     # adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
     adam_optimizer=optimizers.Adam(learning_rate=init_lr)
     
-    model.mynn.compile(loss='mse', optimizer=adam_optimizer)
-    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop]) # Verbose = 2
+    model.mynn.compile(loss=mse_mod, optimizer=adam_optimizer)
+    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose = 2)
     
     # Save loss as a csv file for future reference 
     
