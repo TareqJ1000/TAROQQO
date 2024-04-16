@@ -184,7 +184,7 @@ augument_technique = cnfg['augument_technique']
 diff = cnfg['diff'] # Setting this option to -1 is the same as not starting it altogether 
 # Load up how we wanna split up our data
 direc_subfolder = cnfg['direc_name']
-direc = f'Batched Data/{direc_subfolder}'
+direc = f'{direc_subfolder}'
 trainTest_split = cnfg['trainTest_split'] # Split between data seen during training and unseen data for testing 
 trainVal_split = cnfg['trainVal_split'] # Split between training data and validation data
 # Load up training params
@@ -202,9 +202,15 @@ number_of_features = len(feature_subset)
 full_time_series = cnfg['full_time_series']
 model_path = f'models/{model_name}'
 num_of_examples = eval(cnfg['num_of_examples'])
+time_res = cnfg['time_res'] # Time resolution of output network. 
+pad_output_zeros=cnfg['pad_output_zeros']
 
 
-def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, forecast_len=1):
+# Compute the length of the output array factoring in the desired forecast length and the time resolution 
+output_len = int(forecast_length/time_res) 
+
+
+def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, pad_output_zeros = True,  forecast_len=1, time_res=1):
 
     total_input = []
     total_output = []
@@ -220,7 +226,7 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     
     
     for jj, name in enumerate(directory_list):
-
+        
         df = pd.read_csv(f'{direc_name}/{name}')
         #print(name)
         # rename columns to something more decipherable 
@@ -236,9 +242,8 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
              print('error data detected. Skipping to next value')
              continue
         
-        
         dataset_weather = np.empty((time_steps, num_features))
-        dataset_output = np.empty((forecast_len, 1))
+        dataset_output = np.empty((output_len, 1))
         
         ###### INPUT DATA #######
         
@@ -251,8 +256,12 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         ###### OUTPUT DATA #######
         
         # In the 0th output, CN2 FUTURE
-                
-        dataset_output[:,0] = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
+        
+        # First, let's consider every example up to forecast length 
+        nn_output  = np.log10(df["CN2 Future"][:forecast_len].to_numpy())
+        
+        # Next, only consider every time_res example in the final output
+        dataset_output[:,0] = nn_output[np.mod(np.arange(len(nn_output)),time_res) == 0]
         
         # Let's consider wildly varying output data. Compute the difference between maximum and minimum. 
         max_CN2 = np.max(np.abs(dataset_output[:,0]))
@@ -284,13 +293,6 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     
     if (full_time_series):
         total_output = rollify_training(total_output, window_size)
-        
-    # Before normalizing: store information about the minimum and maximum of the CN^2 ... useful to apply the inverse operation
-    
-    # min_CN2, max_CN2 = min(total_output), max(total_output)
-        
-    # Apply normalization to each output entry
-    # total_output[:,:,0], minOut, maxOut = norm_data(total_output[:,:,0])
     
     # Finally, if we're working with a time series, let's pad out the output array with 0s
     
@@ -311,6 +313,9 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     total_output_padded[0:dataset_len,:,0] = ziggy[dataset_len::,:]
     
     if(full_time_series):
+        if (pad_output_zeros==False):
+            total_output[:,:,0] = total_output_padded[:,0:output_len,0]
+            return total_input, total_output, minOut, maxOut
         return total_input, total_output_padded, minOut, maxOut 
     else:
         return total_input, total_output_padded[:,0], minOut, maxOut
@@ -328,7 +333,7 @@ if __name__ == '__main__':
     
     # We can begin proper. Load up the dataset and get ready to train!!
     
-    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, forecast_length)
+    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
     num_examples_train = int(len(X)*trainTest_split)
     X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
     
@@ -374,7 +379,7 @@ if __name__ == '__main__':
         y_train = np.concatenate((y_train, y_aug))
         
         
-    model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=series_length-window_size+1)
+    model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=output_len)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
     early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
