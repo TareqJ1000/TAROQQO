@@ -27,6 +27,7 @@ from yaml import Loader
 
 from keras import backend as K
 from tensorflow.keras.preprocessing.sequence import pad_sequences 
+import pickle as pkl
 
 # from augmentation import jitter, scaling, magnitude_warp, window_slice, window_warp
 
@@ -332,12 +333,23 @@ if __name__ == '__main__':
     print(f"Number of files:{int(sizeOfFiles)}")
     
     # We can begin proper. Load up the dataset and get ready to train!!
-    
     X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
+    
+    # In a new move, shuffle the complete time series 
+    
+    shuffleInts = np.arange(0,num_of_examples, dtype=int)
+    np.random.shuffle(shuffleInts)
+    X = X[shuffleInts]
+    y = y[shuffleInts]
+    
+    # Then split the data set into train-val-test
+    
     num_examples_train = int(len(X)*trainTest_split)
     X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
     
-    # Note this number down!! 
+    # Export the test data for post-analysis. Allow for atleast 1000 data samples in the final dataset. 
+    X_test, y_test = X[num_examples_train:], y[num_examples_train:]
+
     print(f"Number of training+validation examples: {num_examples_train}")
     
     total_len_train = len(X_data)
@@ -348,7 +360,10 @@ if __name__ == '__main__':
     X_train, y_train = X_data[0:num_examples_val], y_data[0:num_examples_val]
     X_val, y_val = X_data[num_examples_val:], y_data[num_examples_val:]
     
-    print(f"Training data rolled with window size of {window_size} and normalized! Applying {augument_technique} augumentation technqiue... ")
+    with open(f"Test Data/{model_name}_testData.pkl", 'wb') as f:
+        pkl.dump([X_test, y_test], f)
+    
+    print(f"Training data shuffled, rolled with window size of {window_size} and normalized! Applying {augument_technique} augumentation technqiue... ")
     
     if augument_technique=='jitter':
         #X_aug = jitter(X_train, sigma=cnfg['jitter_sigma'])
