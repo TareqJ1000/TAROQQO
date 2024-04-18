@@ -118,6 +118,17 @@ def norm_data(x):
     
     return normed, minX, maxX
 
+
+# This normalizes the data according to prior data. 
+
+def norm_data_select(x, minX, maxX):  
+    normed = (x - minX)/(maxX - minX)
+    
+    # Zero out any values that are above 1
+    normed[normed>1] =  0
+    
+    return normed, minX, maxX
+
 # This applies a rolling average on the dataset 
 
 # Function taken from a learnpython article
@@ -197,7 +208,7 @@ batch_size = cnfg['batch_size']
 # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
 #feature_subsets = get_column_subsets()
 #feature_subset = feature_subsets[shift]
-#feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp °C']
+#feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp Â°C']
 feature_subset = cnfg['input_list']
 number_of_features = len(feature_subset)
 full_time_series = cnfg['full_time_series']
@@ -209,7 +220,6 @@ pad_output_zeros=cnfg['pad_output_zeros']
 
 # Compute the length of the output array factoring in the desired forecast length and the time resolution 
 output_len = int(forecast_length/time_res) 
-
 
 def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, pad_output_zeros = True,  forecast_len=1, time_res=1):
 
@@ -283,44 +293,11 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     total_input = np.array(total_input)
     total_output = np.array(total_output)
     
-    # Apply rolling average onto the input data
-    total_input = rollify_training(total_input, window_size)
-    
-    # Apply normalization to each input entry (except for CN2, this needs to be handled specially)
-    for ii in np.delete(np.arange(len(input_list)), 2):
-        total_input[:,:,ii],_,_ = norm_data(total_input[:,:,ii])
-
-    # If we are working with time series prediction, apply rolling on output time series
-    
-    if (full_time_series):
-        total_output = rollify_training(total_output, window_size)
-    
-    # Finally, if we're working with a time series, let's pad out the output array with 0s
-    
-    window_time_steps_input = total_input.shape[1]
-    window_time_steps_output = total_output.shape[1]
-    dataset_len = int(total_input.shape[0])
-
-    total_output_padded = np.zeros((total_input.shape[0], window_time_steps_input, 1))
-
-    total_output_padded[:,:window_time_steps_output, 0] = total_output[:,:,0]
-
-    # At this point, normalize the CN2 for BOTH input and output. This is important!
-    
-    ziggy = np.concatenate((total_input[:,:,2], total_output_padded[:,:,0]))
-    ziggy,minOut,maxOut = norm_data(ziggy)
-
-    total_input[0:dataset_len,:,2] = ziggy[0:dataset_len, :]
-    total_output_padded[0:dataset_len,:,0] = ziggy[dataset_len::,:]
-    
     if(full_time_series):
-        if (pad_output_zeros==False):
-            total_output[:,:,0] = total_output_padded[:,0:output_len,0]
-            return total_input, total_output, minOut, maxOut
-        return total_input, total_output_padded, minOut, maxOut 
+        return total_input, total_output
     else:
-        return total_input, total_output_padded[:,0], minOut, maxOut
-
+        return total_input, total_output[:,0]
+    
 if __name__ == '__main__':
 
     print(f'Parameters used: {feature_subset}. Saving as txt...')
@@ -333,14 +310,14 @@ if __name__ == '__main__':
     print(f"Number of files:{int(sizeOfFiles)}")
     
     # We can begin proper. Load up the dataset and get ready to train!!
-    X,y,_,_ = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
-    
-    # In a new move, shuffle the complete time series 
-    
-    shuffleInts = np.arange(0,num_of_examples, dtype=int)
-    np.random.shuffle(shuffleInts)
-    X = X[shuffleInts]
-    y = y[shuffleInts]
+    X,y,minOut,maxOut,minOut_X,maxOut_X = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
+    num_of_examples = len(X)
+
+    # Save the minimum out, maximum out
+    print(minOut)
+    print(maxOut)
+    print(minOut_X)
+    print(maxOut_X)
     
     # Then split the data set into train-val-test
     
@@ -401,7 +378,7 @@ if __name__ == '__main__':
     
     # Compile and run the model 
     
-    # adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
+    #adam_optimizer=optimizers.AdamW(learning_rate=init_lr, weight_decay=0.001)
     adam_optimizer=optimizers.Adam(learning_rate=init_lr)
     
     model.mynn.compile(loss=mse_mod, optimizer=adam_optimizer)
