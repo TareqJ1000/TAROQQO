@@ -91,7 +91,7 @@ def mse_mod(y_true, y_pred):
     return loss_true + 1e-8
 
 def get_column_subsets():
-    column_names = ['pressure', 'temperature', 'wind_speed', 'SOG']
+    column_names = ['pressure', 'temperature', 'wind_speed', 'SOG', 'day', 'time']
     # Create all possible permutations of this list
     subsets = [list(itertools.combinations(column_names, ii)) for ii in range(len(column_names)+1)]
     base_names = ['solar_radiation', 'relative_humidity']
@@ -157,6 +157,14 @@ def rollify_training(X, window_size):
             
     return X_roll
 
+def hours_to_int(x):
+    if x[0:-2]=='':
+        return 0
+    else:
+        return int(x[0:-2])
+    
+def convert_to_sec(minute, hour):
+    return 3600*hour + 60*minute
 
 # parse through slurm array (for use w/ bash script. You can set shift to be a random integer for the purposes of testing locally)
 
@@ -207,16 +215,23 @@ patience = cnfg['patience'] # For how many epochs do we wait before we start adj
 lr_reduce_factor = cnfg['lr_reduce_factor'] # By how much do we update the LR if we trigger reduce_lr?
 batch_size = cnfg['batch_size']
 # Select subset of features that we'd like to use with the network. The feature that we select is dependent on the slurm index. 
-#feature_subsets = get_column_subsets()
-#feature_subset = feature_subsets[-1]
+feature_subsets = get_column_subsets()
+feature_subset = feature_subsets[-1]
 #feature_subset = ['RH %', 'kJ/m^2', 'CN2', 'Temp Â°C']
-feature_subset = cnfg['input_list']
+#feature_subset = cnfg['input_list']
+
 number_of_features = len(feature_subset)
+if ('day' in feature_subset):
+    number_of_features+= 1
+if ('time' in feature_subset):
+    number_of_features+= 1
+    
 full_time_series = cnfg['full_time_series']
 model_path = f'models/{model_name}'
 num_of_examples = eval(cnfg['num_of_examples'])
 time_res = cnfg['time_res'] # Time resolution of output network. 
 pad_output_zeros=cnfg['pad_output_zeros']
+patience = cnfg['patience']
 
 
 # Compute the length of the output array factoring in the desired forecast length and the time resolution 
@@ -231,18 +246,36 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     
     directory_list = [name for name in os.listdir(f'{direc_name}/.')]
     num_features = len(input_list)
+    print(num_features)
+    if ('day' in input_list):
+        num_features+= 1
+    if ('time' in input_list):
+        num_features+= 1
+    print(num_features)
+    
     
     print(f'Parameter List: {input_list}')
     
     num_of_zeros = 0
-    
     
     for jj, name in enumerate(directory_list):
         
         df = pd.read_csv(f'{direc_name}/{name}')
         #print(name)
         # rename columns to something more decipherable 
-        df = df.rename(columns={'Temp °C':'temperature', 'RH %':'relative_humidity', 'kJ/m^2':'solar_radiation', 'Wind Speed m/s':'wind_speed', 'SOG cm':'SOG','Pressure hPa':'pressure'})
+        df = df.rename(columns={'Temp °C':'temperature', 'RH %':'relative_humidity', 'kJ/m^2':'solar_radiation', 'Wind Speed m/s':'wind_speed', 'SOG cm':'SOG','Pressure hPa':'pressure', 'hr:min (UTC)':'time', 'Julian day (UTC)': 'day'})
+        # Map the day into a unit circle, and create 'day_sin'  and 'day_cos' to define the x and y components in the circle. 
+        df['day_sin'] = np.sin(df['day']*(2.*np.pi/365))
+        df['day_cos'] = np.cos(df['day']*(2.*np.pi/365))
+        # For time, we convert to string representation
+        df['time']=df['time'].astype(str)
+        df['minute'] = df['time'].apply(lambda x: int(x[-2:]))
+        df['hour'] = df['time'].apply(lambda x: hours_to_int(x))
+        df['second'] = convert_to_sec(df['minute'], df['hour'])
+        # Map the time into a unit circle 
+        df['time_sin']= np.sin(df['second']*(2.*np.pi/86400))
+        df['time_cos']= np.cos(df['second']*(2.*np.pi/86400))
+
         #print(df.columns)
         #input()
         
@@ -258,12 +291,37 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         dataset_output = np.empty((output_len, 1))
         
         ###### INPUT DATA #######
+        ii= 0
+        kk= 0 # index for column
         
-        for ii, colName in enumerate(input_list):
-            if(colName=='CN2'):
+        while ii < num_features:
+           # print(ii)
+            colName = input_list[kk]
+            if(colName=='day'):
+             
+                # include both day_sin and day_cos
+                
+                dataset_weather[:,ii] = df['day_sin'].to_numpy()
+                ii += 1
+                dataset_weather[:,ii] = df['day_cos'].to_numpy()
+                
+            elif(colName=='time'):
+                
+                # Include both time_sin and time_cos
+                
+                dataset_weather[:,ii] = df['time_sin'].to_numpy()
+                ii += 1
+                dataset_weather[:,ii] = df['time_cos'].to_numpy()
+               
+                
+            
+            elif(colName=='CN2'):
                 dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
             else:
+                
                 dataset_weather[:,ii] = df[colName].to_numpy()
+            kk += 1
+            ii += 1
                 
         ###### OUTPUT DATA #######
         
@@ -279,6 +337,8 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         max_CN2 = np.max(np.abs(dataset_output[:,0]))
         min_CN2 = np.min(np.abs(dataset_output[:,0]))
         diff = np.abs(max_CN2 - min_CN2)
+        
+    
         
         if (diff >= cnfg['diff']):
             total_input.append(dataset_weather)
@@ -338,15 +398,11 @@ if __name__ == '__main__':
     minTrain = []
     maxTrain = []
     
-    print(np.max(X_train[:,:,3]))
-    
-    for ii in np.arange(len(feature_subset)  - 1):
+    for ii in np.arange(number_of_features  - 1):
         X_train[:,:,ii], minOut, maxOut = norm_data(X_train[:,:,ii])
         minTrain.append(minOut)
         maxTrain.append(maxOut)
     
-    
-    print(np.max(X_train[:,:,-1]))
     # The CN2 Input and Output should be normalized together. 
     
     cn2_combined_train = np.concatenate((X_train[:,:,-1].flatten(), y_train[:,:,0].flatten()))
@@ -361,11 +417,11 @@ if __name__ == '__main__':
     
     # Repeat this procedure on the validation and test datasets, but now utilize the normalization of the training data. It should be okay to normalize the CN2 here as well as the max and min are fixed. 
     
-    for ii in np.arange(len(feature_subset)):
+    for ii in np.arange(number_of_features):
         X_val[:,:,ii], _, _= norm_data_select(X_val[:,:,ii], minTrain[ii], maxTrain[ii])
         X_test[:,:,ii],_,_ = norm_data_select(X_test[:,:,ii], minTrain[ii], maxTrain[ii])
         
-        if (ii==len(feature_subset)-1):
+        if (ii==number_of_features-1):
             y_val[:,:,0],_,_ = norm_data_select(y_val[:,:,0], minTrain[ii], maxTrain[ii])
             y_test[:,:,0],_,_ = norm_data_select(y_test[:,:,0], minTrain[ii], maxTrain[ii])
             
@@ -412,7 +468,7 @@ if __name__ == '__main__':
     model = rn_network(nn_type, neurons, 1, number_of_features, hidLayers, model_name, forecast_len=output_len)
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=model_path, save_weights_only=False, verbose=2)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor = lr_reduce_factor, patience = patience, min_lr = 1e-7)
-    early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=45, start_from_epoch=100)
+    early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=patience, start_from_epoch=100)
     
     # Compile and run the model 
     
