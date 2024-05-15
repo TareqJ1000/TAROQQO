@@ -79,6 +79,17 @@ class PlotLearning(tf.keras.callbacks.Callback):
         plt.tight_layout()
         plt.savefig(directory + f'/epochs_{epoch}.png')
         
+        
+        # Save loss as a csv file for future reference 
+        
+        complete_loss = np.array([self.metrics['loss'], self.metrics['val_loss']])
+        complete_loss = pd.DataFrame(complete_loss)
+        
+        #complete_loss = pd.DataFrame(hist.history)
+        with open(f"loss/loss_{model_name}.csv", "wb") as f:
+            complete_loss.to_csv(f)
+        
+        
         print('Saved plot of most recent training epoch to disk')
         
         
@@ -228,11 +239,16 @@ if ('time' in feature_subset):
     
 full_time_series = cnfg['full_time_series']
 model_path = f'models/{model_name}'
-num_of_examples = eval(cnfg['num_of_examples'])
+num_of_examples = eval(cnfg['num_of_examples']) # total number of datapoints to load 
+num_of_examples_fixed = eval(cnfg['num_of_examples_fixed']) # Fixed number of examples that we wanna load. 
+num_of_examples_fixed = int(num_of_examples_fixed)
 time_res = cnfg['time_res'] # Time resolution of output network. 
 pad_output_zeros=cnfg['pad_output_zeros']
 patience = cnfg['patience']
-
+shuffler = cnfg['isShuffle']
+saveShuffle = cnfg['saveShuffle'] # save the randomized integers. 
+loadShuffle = cnfg['loadShuffle'] # do we load the randomized integers
+shuffleDirec = cnfg['shuffleDirec'] + '.txt' # Where are the saved shuffled integers? Only relevant if we choose to load the shuffled ints. 
 
 # Compute the length of the output array factoring in the desired forecast length and the time resolution 
 output_len = int(forecast_length/time_res) 
@@ -259,8 +275,13 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
     num_of_zeros = 0
     
     for jj, name in enumerate(directory_list):
+    
+       # print("****")
+        
+        #print(jj)
         
         df = pd.read_csv(f'{direc_name}/{name}')
+        #print(name)
         #print(name)
         # rename columns to something more decipherable 
         df = df.rename(columns={'Temp °C':'temperature', 'RH %':'relative_humidity', 'kJ/m^2':'solar_radiation', 'Wind Speed m/s':'wind_speed', 'SOG cm':'SOG','Pressure hPa':'pressure', 'hr:min (UTC)':'time', 'Julian day (UTC)': 'day'})
@@ -322,6 +343,7 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
                 dataset_weather[:,ii] = df[colName].to_numpy()
             kk += 1
             ii += 1
+            
                 
         ###### OUTPUT DATA #######
         
@@ -338,8 +360,6 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         min_CN2 = np.min(np.abs(dataset_output[:,0]))
         diff = np.abs(max_CN2 - min_CN2)
         
-    
-        
         if (diff >= cnfg['diff']):
             total_input.append(dataset_weather)
             total_output.append(dataset_output)
@@ -350,7 +370,12 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         if (jj>num_of_examples):
             print("Finished loading data!")
             break;
-                
+            
+        
+       # print(dataset_output)
+       # print("****")
+            
+        
     total_input = np.array(total_input)
     total_output = np.array(total_output)
     
@@ -377,21 +402,61 @@ if __name__ == '__main__':
     X,y = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
     num_of_examples = len(X)
 
+    # If shuffling is enabled, apply shuffling 
+    
+    if shuffler:
+        shuffleInts = np.arange(0,num_of_examples)
+        if (loadShuffle):
+            print("Loading shuffled integers")
+            oldShuffle = np.loadtxt(shuffleDirec, dtype='int')
+            # Now, we be careful about the length here 
+            old_num_of_examples = len(oldShuffle)
+            if(old_num_of_examples == num_of_examples or num_of_examples > old_num_of_examples):
+                print(oldShuffle)
+                X = X[oldShuffle]
+                y = y[oldShuffle]
+                # The second case needs to be handled with more care becuase we might have integers that are out of bounds wrt the currently loaded system. 
+            elif(old_num_of_examples > num_of_examples):
+                print("The shuffled integers is greater than the loaded number of examples. ")
+                for ii in range(num_of_examples):
+                    if(oldShuffle[ii] >= num_of_examples): # skip the shuffle and move on to the next iteration. 
+                        continue
+                    else:
+                        temp = X[ii]
+                        X[ii] = X[oldShuffle[ii]]
+                        X[oldShuffle[ii]] = temp
+               # shuffleInts = oldShuffle[:num_of_examples]
+        else:
+            np.random.shuffle(shuffleInts)
+            if (saveShuffle):
+                np.savetxt(f'shuffleInts/{model_name}.txt', shuffleInts)
+            X = X[shuffleInts]
+            y = y[shuffleInts]
+        
+    # The shuffling step will be the same as before (just w/ more data). We select the first number of examples examples from that shuffled integer list. 
+    
+    if(num_of_examples_fixed>0):
+        X = X[0:num_of_examples_fixed]
+        y = y[0:num_of_examples_fixed]
+    
     # Then split the data set into train-val-test
     
     num_examples_train = int(len(X)*trainTest_split)
-    X_data, y_data= X[0:num_examples_train], y[0:num_examples_train]
-    
-    # Export the test data for post-analysis. Allow for atleast 1000 data samples in the final dataset. 
-    X_test, y_test = X[num_examples_train:], y[num_examples_train:]
+    num_examples_val = int(len(X)*trainVal_split)
+    num_trainVal = num_examples_train + num_examples_val 
+    num_examples_test = num_of_examples - num_trainVal
 
-    print(f"Number of training+validation examples: {num_examples_train}")
+    # Export the test data for post-analysis. Allow for atleast 1000 data samples in the final dataset. 
+    X_test, y_test = X[num_trainVal:], y[num_trainVal:]
+
+    print(f"Number of training examples: {num_examples_train}")
+    print(f"Number of validation examples: {num_examples_val}")
+    print(f"Number of test examples: {num_examples_test}")
     
-    total_len_train = len(X_data)
-    num_examples_val = int(total_len_train*(1-trainVal_split))
+    total_len_train = num_examples_train
     
-    X_train, y_train = X_data[0:num_examples_val], y_data[0:num_examples_val]
-    X_val, y_val = X_data[num_examples_val:], y_data[num_examples_val:]
+    X_train, y_train = X[0:num_examples_train], y[0:num_examples_train]
+    X_val, y_val = X[num_examples_train:num_trainVal], y[num_examples_train:num_trainVal]
     
     # normalize the training data. The convention is that the last element in the minTrain/maxTrain list is always the CN2 value
     
@@ -424,8 +489,7 @@ if __name__ == '__main__':
         if (ii==number_of_features-1):
             y_val[:,:,0],_,_ = norm_data_select(y_val[:,:,0], minTrain[ii], maxTrain[ii])
             y_test[:,:,0],_,_ = norm_data_select(y_test[:,:,0], minTrain[ii], maxTrain[ii])
-            
-            
+  
     print(f"Normalization of training data finished! Minimums: {minTrain}, Maximums: {maxTrain}. This is applied seperately to validation & test data.")
     
     # We should now be ready to roll. Save the test data and let's get started! 
@@ -480,10 +544,10 @@ if __name__ == '__main__':
     
     # Save loss as a csv file for future reference 
     
-    complete_loss = pd.DataFrame(hist.history)
+    #complete_loss = pd.DataFrame(hist.history)
 
-    with open(f"loss/loss_{model_name}.csv", "wb") as f:
-        complete_loss.to_csv(f)
+   # with open(f"loss/loss_{model_name}.csv", "wb") as f:
+       # complete_loss.to_csv(f)
         
     ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###
 
