@@ -1,24 +1,33 @@
-model_name: 'trainSeries_60Min'
-nn_type: 4
+model_name: 'FCNN_FebMar_Type7'
+nn_type: 7
 neurons: 1000
 hidLayers: 2
 window_size: 1
 series_length: 720 # For input
-forecast: 720 # For output
-input_list:  ['relative_humidity', 'solar_radiation', 'CN2', 'temperature']
+forecast: 360 # For output
+input_list:  ['relative_humidity', 'solar_radiation', 'temperature', 'time', 'CN2']
 diff: -1
 full_time_series: True
+pad_output_zeros: False
 
-direc_name: OneMinResolution
-trainTest_split: 0.90
+direc_name: dataset/OneMinResolution_OneHourWindow
+trainTest_split: 0.75
 trainVal_split: 0.15
-num_of_examples: 3.8e4
+num_of_examples: 5.e2
+num_of_examples_fixed: -1.e0
+time_res: 15
 
-epochs: 1000
-init_lr: 1.e-3
-patience: 10
+epochs: 300
+init_lr: 1.e-4
+patience: 15
 lr_reduce_factor: 0.1
 batch_size: 32
+isShuffle: False
+saveShuffle: False
+loadShuffle: False
+shuffleDirec: 'shuffleInts/trainSeries_tester_6521'
+zeroInput: False
+
 
 # Data augumentation parameters. Supported are 'jitter', 'window_warp', 'window_slice', and 'magnitude_warp 
 

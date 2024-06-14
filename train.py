@@ -249,11 +249,12 @@ shuffler = cnfg['isShuffle']
 saveShuffle = cnfg['saveShuffle'] # save the randomized integers. 
 loadShuffle = cnfg['loadShuffle'] # do we load the randomized integers
 shuffleDirec = cnfg['shuffleDirec'] + '.txt' # Where are the saved shuffled integers? Only relevant if we choose to load the shuffled ints. 
+zeroInput = cnfg['zeroInput'] # Do we zero out the inputs? This is one way of telling us the baseline performance of our model ... which is that the network learns fuck all. 
 
 # Compute the length of the output array factoring in the desired forecast length and the time resolution 
 output_len = int(forecast_length/time_res) 
 
-def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, pad_output_zeros = True,  forecast_len=1, time_res=1):
+def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, full_time_series=False, pad_output_zeros = True,  forecast_len=1, time_res=1, zeroInput = False):
 
     total_input = []
     total_output = []
@@ -317,32 +318,36 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
         
         while ii < num_features:
            # print(ii)
-            colName = input_list[kk]
-            if(colName=='day'):
-             
-                # include both day_sin and day_cos
+           if(zeroInput): # If zero input is enabled, we are zeroing out all of the inputs. 
+               dataset_weather[:,ii] = np.zeros(time_steps)
+               #print(dataset_weather[:,ii])
+               ii += 1
+           else:
+                colName = input_list[kk]
+                if(colName=='day'):
+                 
+                    # include both day_sin and day_cos
+                    
+                    dataset_weather[:,ii] = df['day_sin'].to_numpy()
+                    ii += 1
+                    dataset_weather[:,ii] = df['day_cos'].to_numpy()
+                    
+                elif(colName=='time'):
+                    
+                    # Include both time_sin and time_cos
+                    
+                    dataset_weather[:,ii] = df['time_sin'].to_numpy()
+                    ii += 1
+                    dataset_weather[:,ii] = df['time_cos'].to_numpy()
+                   
+                    
                 
-                dataset_weather[:,ii] = df['day_sin'].to_numpy()
+                elif(colName=='CN2'):
+                    dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
+                else:
+                    dataset_weather[:,ii] = df[colName].to_numpy()
+                kk += 1
                 ii += 1
-                dataset_weather[:,ii] = df['day_cos'].to_numpy()
-                
-            elif(colName=='time'):
-                
-                # Include both time_sin and time_cos
-                
-                dataset_weather[:,ii] = df['time_sin'].to_numpy()
-                ii += 1
-                dataset_weather[:,ii] = df['time_cos'].to_numpy()
-               
-                
-            
-            elif(colName=='CN2'):
-                dataset_weather[:,ii] = np.log10(df[colName].to_numpy())
-            else:
-                
-                dataset_weather[:,ii] = df[colName].to_numpy()
-            kk += 1
-            ii += 1
             
                 
         ###### OUTPUT DATA #######
@@ -364,7 +369,7 @@ def load_data(direc_name, time_steps, input_list, window_size, num_of_examples, 
             total_input.append(dataset_weather)
             total_output.append(dataset_output)
             
-        if (jj%500==0):
+        if (jj%100==0):
             print(f"Data loaded:{jj}")
             
         if (jj>num_of_examples):
@@ -399,7 +404,7 @@ if __name__ == '__main__':
     
     # We can begin proper. Load up the dataset and get ready to train!!
     
-    X,y = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res)
+    X,y = load_data(direc, series_length, feature_subset, window_size, num_of_examples, full_time_series, pad_output_zeros, forecast_length, time_res, zeroInput=zeroInput)
     num_of_examples = len(X)
 
     # If shuffling is enabled, apply shuffling 
@@ -458,45 +463,65 @@ if __name__ == '__main__':
     X_train, y_train = X[0:num_examples_train], y[0:num_examples_train]
     X_val, y_val = X[num_examples_train:num_trainVal], y[num_examples_train:num_trainVal]
     
-    # normalize the training data. The convention is that the last element in the minTrain/maxTrain list is always the CN2 value
     
-    minTrain = []
-    maxTrain = []
+    if (zeroInput): # Don't normalize the input data ofc. Only norm the output training data. 
     
-    for ii in np.arange(number_of_features  - 1):
-        X_train[:,:,ii], minOut, maxOut = norm_data(X_train[:,:,ii])
-        minTrain.append(minOut)
-        maxTrain.append(maxOut)
-    
-    # The CN2 Input and Output should be normalized together. 
-    
-    cn2_combined_train = np.concatenate((X_train[:,:,-1].flatten(), y_train[:,:,0].flatten()))
-    _, minCN2, maxCN2 = norm_data(cn2_combined_train)
-    minTrain.append(minCN2)
-    maxTrain.append(maxCN2)
-    
-    # Update X_train, y_train
-    
-    X_train[:,:,-1], _, _ = norm_data_select(X_train[:,:,-1], minCN2, maxCN2)
-    y_train[:,:,0], _, _  = norm_data_select(y_train[:,:,0], minCN2, maxCN2)
-    
-    # Repeat this procedure on the validation and test datasets, but now utilize the normalization of the training data. It should be okay to normalize the CN2 here as well as the max and min are fixed. 
-    
-    for ii in np.arange(number_of_features):
-        X_val[:,:,ii], _, _= norm_data_select(X_val[:,:,ii], minTrain[ii], maxTrain[ii])
-        X_test[:,:,ii],_,_ = norm_data_select(X_test[:,:,ii], minTrain[ii], maxTrain[ii])
+        y_train[:,:,0], minCN2, maxCN2 = norm_data(y_train[:,:,0])
+        y_val[:,:,0], _, _ = norm_data_select(y_val[:,:,0], minCN2, maxCN2)
+        y_test[:, :, 0], _, _ = norm_data_select(y_test[:,:,0], minCN2, maxCN2)
+        print(f"Activated ZERO mode. Normalization of OUTPUT training data finished! Minimums: {minCN2}, Maximums: {maxCN2}. This is applied seperately to validation & test data.")
         
-        if (ii==number_of_features-1):
-            y_val[:,:,0],_,_ = norm_data_select(y_val[:,:,0], minTrain[ii], maxTrain[ii])
-            y_test[:,:,0],_,_ = norm_data_select(y_test[:,:,0], minTrain[ii], maxTrain[ii])
-  
-    print(f"Normalization of training data finished! Minimums: {minTrain}, Maximums: {maxTrain}. This is applied seperately to validation & test data.")
+    else:
+        # normalize the training data. The convention is that the last element in the minTrain/maxTrain list is always the CN2 value
+        minTrain = []
+        maxTrain = []
+        
+        for ii in np.arange(number_of_features  - 1):
+            X_train[:,:,ii], minOut, maxOut = norm_data(X_train[:,:,ii])
+            minTrain.append(minOut)
+            maxTrain.append(maxOut)
+        
+        # The CN2 Input and Output should be normalized together. 
+        
+        cn2_combined_train = np.concatenate((X_train[:,:,-1].flatten(), y_train[:,:,0].flatten()))
+        _, minCN2, maxCN2 = norm_data(cn2_combined_train)
+        minTrain.append(minCN2)
+        maxTrain.append(maxCN2)
+        
+        # Update X_train, y_train
+        
+        X_train[:,:,-1], _, _ = norm_data_select(X_train[:,:,-1], minCN2, maxCN2)
+        y_train[:,:,0], _, _  = norm_data_select(y_train[:,:,0], minCN2, maxCN2)
+        
+        # Repeat this procedure on the validation and test datasets, but now utilize the normalization of the training data. It should be okay to normalize the CN2 here as well as the max and min are fixed. 
+        
+        for ii in np.arange(number_of_features):
+            X_val[:,:,ii], _, _= norm_data_select(X_val[:,:,ii], minTrain[ii], maxTrain[ii])
+            X_test[:,:,ii],_,_ = norm_data_select(X_test[:,:,ii], minTrain[ii], maxTrain[ii])
+            
+            if (ii==number_of_features-1):
+                y_val[:,:,0],_,_ = norm_data_select(y_val[:,:,0], minTrain[ii], maxTrain[ii])
+                y_test[:,:,0],_,_ = norm_data_select(y_test[:,:,0], minTrain[ii], maxTrain[ii])
+      
+        print(f"Normalization of training data finished! Minimums: {minTrain}, Maximums: {maxTrain}. This is applied seperately to validation & test data.")
+    
+    # If we're sending as input a FFNN, then we will have to flatten out the input
+    
+    if(nn_type==6):
+        X_train_shape = np.shape(X_train)
+        X_val_shape = np.shape(X_val)
+        X_test_shape = np.shape(X_test)
+        
+        X_train = np.reshape(X_train,(X_train_shape[0], X_train_shape[1]*X_train_shape[2]))
+        X_val = np.reshape(X_val, (X_val_shape[0], X_val_shape[1]*X_val_shape[2]))
+        X_test = np.reshape(X_test, (X_test_shape[0], X_test_shape[1]*X_test_shape[2]))
     
     # We should now be ready to roll. Save the test data and let's get started! 
     
     with open(f"Test Data/{model_name}_testData.pkl", 'wb') as f:
         pkl.dump([X_test, y_test], f)
         print(f"Test data saved as {model_name}_testData.pkl ")
+    
     
     print(f"Applying {augument_technique} augumentation technqiue... ")
     
@@ -540,7 +565,7 @@ if __name__ == '__main__':
     adam_optimizer=optimizers.Adam(learning_rate=init_lr)
     
     model.mynn.compile(loss=mse_mod, optimizer=adam_optimizer)
-    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose = 2)
+    hist = model.mynn.fit(X_train, y_train, batch_size=batch_size, validation_data=(X_val, y_val), epochs=epochs, callbacks = [PlotLearning(), cp_callback, reduce_lr, early_stop], verbose=2)
     
     # Save loss as a csv file for future reference 
     
