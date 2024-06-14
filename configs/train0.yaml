@@ -1,14 +1,11 @@
-model_name: 'FCNN_FebMar_Type7'
-nn_type: 7
+model_name: 'Test'
+nn_type: 0
 neurons: 1000
 hidLayers: 2
-window_size: 1
 series_length: 720 # For input
 forecast: 360 # For output
 input_list:  ['relative_humidity', 'solar_radiation', 'temperature', 'time', 'CN2']
-diff: -1
 full_time_series: True
-pad_output_zeros: False
 
 direc_name: dataset/OneMinResolution_OneHourWindow
 trainTest_split: 0.75
@@ -27,18 +24,5 @@ saveShuffle: False
 loadShuffle: False
 shuffleDirec: 'shuffleInts/trainSeries_tester_6521'
 zeroInput: False
-
-
-# Data augumentation parameters. Supported are 'jitter', 'window_warp', 'window_slice', and 'magnitude_warp 
-
-augument_technique: 'haha'
-jitter_sigma: 0.03
-windowWarp_ratio: 0.3
-reduce_ratio: 0.90
-magnitude_sigma: 0.2
-magnitude_knot: 4
-
-
-
 
 
