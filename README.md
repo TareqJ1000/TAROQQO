@@ -1,4 +1,4 @@
-## Predicting atmospheric turbulence for secure quantum communications in free space
+# Predicting atmospheric turbulence for secure quantum communications in free space
 
 We present the code used for the training and subsequent analysis of the recurrent neural network (RNN) model TAROCCO, which can be used to forecast turbulence in free-space links. The results of our model, which considers free-space channels over the city of Ottawa, is featured in our preprent (arxiv link). 
 
