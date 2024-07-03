@@ -15,6 +15,9 @@ Use of the train.py script requires configuration of the 'train.yaml' configurat
 
 
 
+![alt text][logo]
+
+[logo]: https://github.com/TareqJ1000/TurbulentNetwork/blob/tareq/TaroccoAI.png "TAROCCO Card"
 
 
 
