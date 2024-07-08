@@ -1,9 +1,6 @@
 # Predicting atmospheric turbulence for secure quantum communications in free space
 
-We present the code used for the training and subsequent analysis of the recurrent neural network (RNN) model TAROCCO, which can be used to forecast turbulence in free-space links. The results of our model, which considers free-space channels over the city of Ottawa, is featured in our preprent (arxiv link). 
-
-## Link to read the related manuscript on arXiv 
-https://arxiv.org/abs/2406.14768
+We present the code used for the training and subsequent analysis of the recurrent neural network (RNN) model TAROCCO, which can be used to forecast turbulence in free-space links. The results of our model, which considers free-space channels over the city of Ottawa, is featured in our preprint on arXiv (https://arxiv.org/abs/2406.14768). 
 
 ## How to use
 - nn_architecture.py implements the RNN architectures to be trained.
@@ -13,14 +10,8 @@ https://arxiv.org/abs/2406.14768
 
 Use of the train.py script requires configuration of the 'train.yaml' configuration file; it can be configured to train networks of arbitrary complexity, as well as to adjust the input series duration & output time resolution. 
 
-
-
 ![alt text][logo]
 
 [logo]: https://github.com/TareqJ1000/TurbulentNetwork/blob/tareq/TaroccoAI.png "TAROCCO Card"
-
-
-
-
 
 
